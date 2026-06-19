@@ -1,0 +1,16 @@
+[Unit]
+Description=LLMO Score Frontend (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/llmo/frontend
+ExecStart=/usr/bin/node_modules/.bin/next start -p 8004
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/root/llmo/frontend/.env.local
+
+[Install]
+WantedBy=multi-user.target
