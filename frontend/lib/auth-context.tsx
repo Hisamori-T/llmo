@@ -30,7 +30,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUser = async () => {
     try {
       const res = await apiClient.get('/users/me');
-      setUser(res.data);
+      const d = res.data;
+      setUser({
+        uid: d.user_id,
+        email: d.email,
+        displayName: d.display_name,
+        plan: d.plan ?? 'starter',
+        orgId: d.agency_id,
+        role: d.role,
+        monthlyCreditsUsed: d.monthly_credit_used ?? 0,
+        monthlyCreditsLimit: d.monthly_credit_limit ?? 0,
+        createdAt: d.created_at ?? '',
+      });
     } catch {
       setUser(null);
     }
@@ -55,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try { await apiClient.post('/auth/logout', { session_id: sessionId }); } catch {}
       localStorage.removeItem('session_id');
     }
+    document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict';
     await signOut(auth);
     setUser(null);
   };

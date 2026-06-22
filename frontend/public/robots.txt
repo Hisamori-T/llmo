@@ -1,4 +1,9 @@
 User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /features
+Allow: /blog
+Allow: /contact
 Disallow: /dashboard/
 Disallow: /auth/
 Disallow: /api/

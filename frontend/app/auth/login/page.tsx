@@ -4,19 +4,33 @@ import { useState } from 'react';
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import type { MultipleConnectionInfo } from '@/lib/types';
+import type { ExistingSession } from '@/lib/types';
 import { MultipleConnectionWarning } from '@/components/MultipleConnectionWarning';
+
+function setAuthSession(sessionId: string) {
+  localStorage.setItem('session_id', sessionId);
+  const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString();
+  document.cookie = `auth_token=${sessionId}; path=/; expires=${expires}; SameSite=Strict`;
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [multipleConnection, setMultipleConnection] = useState<MultipleConnectionInfo | null>(null);
+  const [existingSession, setExistingSession] = useState<ExistingSession | null>(null);
   const [pendingToken, setPendingToken] = useState<string | null>(null);
+
+  const finishLogin = async (sessionId: string) => {
+    setAuthSession(sessionId);
+    await refreshUser();
+    router.push('/dashboard');
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,23 +71,17 @@ export default function LoginPage() {
     const res = await apiClient.post('/auth/login', { id_token: idToken });
     if (res.data.status === 'multiple_connection') {
       setPendingToken(idToken);
-      setMultipleConnection({
-        existingSession: res.data.existing_session,
-        newSessionInfo: res.data.new_session,
-        isDeviceDifferent: res.data.is_device_different,
-      });
+      setExistingSession(res.data.existing_session);
       return;
     }
-    localStorage.setItem('session_id', res.data.session_id);
-    router.push('/dashboard');
+    await finishLogin(res.data.session_id);
   };
 
   const handleForceLogin = async () => {
     if (!pendingToken) return;
     const res = await apiClient.post('/auth/login', { id_token: pendingToken, force: true });
-    localStorage.setItem('session_id', res.data.session_id);
-    setMultipleConnection(null);
-    router.push('/dashboard');
+    setExistingSession(null);
+    await finishLogin(res.data.session_id);
   };
 
   return (
@@ -119,13 +127,11 @@ export default function LoginPage() {
         </p>
       </div>
 
-      {multipleConnection && (
+      {existingSession && (
         <MultipleConnectionWarning
-          existingSession={multipleConnection.existingSession}
-          newSessionInfo={multipleConnection.newSessionInfo}
-          isDeviceDifferent={multipleConnection.isDeviceDifferent}
+          existingSession={existingSession}
           onChooseNewDevice={handleForceLogin}
-          onCancel={() => setMultipleConnection(null)}
+          onCancel={() => setExistingSession(null)}
         />
       )}
     </div>

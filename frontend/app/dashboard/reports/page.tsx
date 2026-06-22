@@ -1,14 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import toast from 'react-hot-toast';
-import type { Report } from '@/lib/types';
 
-export default function ReportsPage() {
+interface Report {
+  report_id: string;
+  diagnosis_id: string;
+  client_id: string;
+  type: string;
+  status: string;
+  share_token: string | null;
+  share_url: string | null;
+  credits_used: number;
+  created_at: string;
+}
+
+function ReportsPage() {
   const searchParams = useSearchParams();
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,17 +27,18 @@ export default function ReportsPage() {
   useEffect(() => {
     const diagnosisId = searchParams.get('diagnosisId');
     const url = diagnosisId ? `/reports?diagnosis_id=${diagnosisId}` : '/reports';
-    apiClient.get(url).then((res) => setReports(res.data.items)).catch(() => {}).finally(() => setLoading(false));
+    apiClient.get(url).then((res) => setReports(res.data || [])).catch(() => {}).finally(() => setLoading(false));
   }, [searchParams]);
 
   const handleDownload = async (reportId: string) => {
     try {
       const res = await apiClient.get(`/reports/${reportId}/download`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `llmo-report-${reportId}.pdf`;
+      a.href = blobUrl;
+      a.download = `llmo-report-${reportId.slice(0, 8)}.pdf`;
       a.click();
+      window.URL.revokeObjectURL(blobUrl);
     } catch {
       toast.error('ダウンロードに失敗しました');
     }
@@ -64,7 +76,7 @@ export default function ReportsPage() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-          <table className="w-full">
+          <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-gray-50">
                 <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">レポートID</th>
@@ -75,18 +87,20 @@ export default function ReportsPage() {
             </thead>
             <tbody>
               {reports.map((r) => (
-                <tr key={r.id} className="hover:bg-gray-50 transition-colors border-b border-slate-200 last:border-0">
-                  <td className="py-3 px-4 text-sm text-body font-mono">{r.id.slice(0, 8)}...</td>
+                <tr key={r.report_id} className="hover:bg-gray-50 transition-colors border-b border-slate-200 last:border-0">
+                  <td className="py-3 px-4 text-body font-mono">{r.report_id.slice(0, 8)}...</td>
                   <td className="py-3 px-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${r.type === 'detailed' ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-700'}`}>
                       {r.type === 'detailed' ? '詳細レポート' : '簡易レポート'}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-sm text-body">{formatDate(r.createdAt)}</td>
-                  <td className="py-3 px-4 flex items-center gap-3">
-                    <button onClick={() => handleDownload(r.id)} className="text-sm text-primary-500 hover:underline cursor-pointer">PDF DL</button>
-                    <button onClick={() => handleShare(r.id)} className="text-sm text-body hover:text-slate-900 cursor-pointer">共有リンク</button>
-                    <Link href={`/dashboard/reports/${r.id}`} className="text-sm text-primary-500 hover:underline">表示</Link>
+                  <td className="py-3 px-4 text-body">{formatDate(r.created_at)}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => handleDownload(r.report_id)} className="text-primary-500 hover:underline cursor-pointer">PDF DL</button>
+                      <button onClick={() => handleShare(r.report_id)} className="text-body hover:text-slate-900 cursor-pointer">共有リンク</button>
+                      <Link href={`/dashboard/reports/${r.report_id}`} className="text-primary-500 hover:underline">表示</Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -95,5 +109,13 @@ export default function ReportsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ReportsPageWrapper() {
+  return (
+    <Suspense fallback={<div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="bg-white rounded-xl border border-slate-200 h-20 animate-pulse" />)}</div>}>
+      <ReportsPage />
+    </Suspense>
   );
 }

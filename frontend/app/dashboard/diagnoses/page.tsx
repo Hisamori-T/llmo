@@ -4,7 +4,21 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
 import { formatDate, getScoreColor } from '@/lib/utils';
-import type { Diagnosis } from '@/lib/types';
+
+interface DiagnosisScores {
+  ai_awareness: number;
+  overall: number;
+}
+
+interface Diagnosis {
+  diagnosis_id: string;
+  client_id: string;
+  url: string;
+  type: string;
+  status: string;
+  scores: DiagnosisScores | null;
+  created_at: string;
+}
 
 export default function DiagnosesPage() {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
@@ -12,7 +26,7 @@ export default function DiagnosesPage() {
   const [filter, setFilter] = useState<'all' | 'completed' | 'running'>('all');
 
   useEffect(() => {
-    apiClient.get('/diagnoses').then((res) => setDiagnoses(res.data.items)).catch(() => {}).finally(() => setLoading(false));
+    apiClient.get('/diagnoses').then((res) => setDiagnoses(res.data || [])).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const filtered = diagnoses.filter((d) => filter === 'all' || d.status === filter);
@@ -57,8 +71,8 @@ export default function DiagnosesPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-200 bg-gray-50">
-                <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">企業名</th>
-                <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">業種</th>
+                <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">URL</th>
+                <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">種類</th>
                 <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">AIスコア</th>
                 <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">ステータス</th>
                 <th scope="col" className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase tracking-wider">実行日</th>
@@ -67,23 +81,23 @@ export default function DiagnosesPage() {
             </thead>
             <tbody>
               {filtered.map((d) => (
-                <tr key={d.id} className="hover:bg-gray-50 transition-colors border-b border-slate-200 last:border-0">
-                  <td className="py-3 px-4 text-sm text-slate-900 font-medium">{d.companyName}</td>
-                  <td className="py-3 px-4 text-sm text-body">{d.industry}</td>
+                <tr key={d.diagnosis_id} className="hover:bg-gray-50 transition-colors border-b border-slate-200 last:border-0">
+                  <td className="py-3 px-4 text-sm text-slate-900 font-medium max-w-[200px] truncate">{d.url}</td>
+                  <td className="py-3 px-4 text-sm text-body">{d.type === 'detailed' ? '詳細診断' : 'シンプル診断'}</td>
                   <td className="py-3 px-4">
-                    {d.status === 'completed' ? (
-                      <span className={`text-sm font-bold ${getScoreColor(d.scores.aiAwareness)}`}>{d.scores.aiAwareness}<span className="text-xs font-normal text-body">/100</span></span>
+                    {d.status === 'completed' && d.scores ? (
+                      <span className={`text-sm font-bold ${getScoreColor(d.scores.ai_awareness)}`}>{Math.round(d.scores.ai_awareness)}<span className="text-xs font-normal text-body">/100</span></span>
                     ) : <span className="text-sm text-body">--</span>}
                   </td>
                   <td className="py-3 px-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${d.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : d.status === 'running' ? 'bg-primary-100 text-primary-700' : d.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
-                      {{ completed: '完了', running: '実行中', failed: 'エラー', pending: '待機中' }[d.status]}
+                      {{ completed: '完了', running: '実行中', failed: 'エラー', pending: '待機中' }[d.status] ?? d.status}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-sm text-body">{formatDate(d.createdAt)}</td>
+                  <td className="py-3 px-4 text-sm text-body">{formatDate(d.created_at)}</td>
                   <td className="py-3 px-4 flex items-center gap-2">
-                    <Link href={`/dashboard/diagnoses/${d.id}`} className="text-sm text-primary-500 hover:underline">詳細</Link>
-                    {d.status === 'completed' && <Link href={`/dashboard/reports?diagnosisId=${d.id}`} className="text-sm text-primary-500 hover:underline">レポート</Link>}
+                    <Link href={`/dashboard/diagnoses/${d.diagnosis_id}`} className="text-sm text-primary-500 hover:underline">詳細</Link>
+                    {d.status === 'completed' && <Link href={`/dashboard/reports?diagnosisId=${d.diagnosis_id}`} className="text-sm text-primary-500 hover:underline">レポート</Link>}
                   </td>
                 </tr>
               ))}
