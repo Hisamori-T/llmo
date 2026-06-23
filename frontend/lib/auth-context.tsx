@@ -1,29 +1,29 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User as FirebaseUser, onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth } from './firebase';
-import { apiClient } from './api';
+import axios from 'axios';
+import { apiClient, setAccessToken } from './api';
 import type { User } from './types';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'https://llmo.fact-ally.com/api';
+
 interface AuthContextType {
-  firebaseUser: FirebaseUser | null;
   user: User | null;
   loading: boolean;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  setTokens: (access_token: string, session_id: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
-  firebaseUser: null,
   user: null,
   loading: true,
   logout: async () => {},
   refreshUser: async () => {},
+  setTokens: () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -48,35 +48,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser) {
-        await fetchUser();
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-    return unsubscribe;
+    // Bootstrap access token from httpOnly refresh cookie on every page load
+    axios.post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true })
+      .then((res) => {
+        setAccessToken(res.data.access_token);
+        return fetchUser();
+      })
+      .catch(() => {
+        setAccessToken(null);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
+  const setTokens = (access_token: string, session_id: string) => {
+    setAccessToken(access_token);
+    if (typeof window !== 'undefined') localStorage.setItem('session_id', session_id);
+  };
+
   const logout = async () => {
-    const sessionId = localStorage.getItem('session_id');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
     if (sessionId) {
       try { await apiClient.post('/auth/logout', { session_id: sessionId }); } catch {}
-      localStorage.removeItem('session_id');
     }
-    document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict';
-    await signOut(auth);
+    setAccessToken(null);
+    if (typeof window !== 'undefined') localStorage.removeItem('session_id');
     setUser(null);
   };
 
   const refreshUser = async () => {
-    if (firebaseUser) await fetchUser();
+    await fetchUser();
   };
 
   return (
-    <AuthContext.Provider value={{ firebaseUser, user, loading, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, logout, refreshUser, setTokens }}>
       {children}
     </AuthContext.Provider>
   );

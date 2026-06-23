@@ -1,15 +1,18 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel, EmailStr
 
 
 class SignupRequest(BaseModel):
-    id_token: str
+    email: EmailStr
+    password: str
     agency_name: str
     display_name: str = ''
 
 
 class LoginRequest(BaseModel):
-    id_token: str
+    email: EmailStr
+    password: str
     force: bool = False
 
 
@@ -22,6 +25,7 @@ class SignupResponse(BaseModel):
     agency_id: str
     session_id: str
     role: str
+    access_token: str
 
 
 class LoginResponse(BaseModel):
@@ -30,4 +34,18 @@ class LoginResponse(BaseModel):
     user_id: Optional[str] = None
     agency_id: Optional[str] = None
     role: Optional[str] = None
-    existing_session: Optional[dict] = None  # populated when status='multiple_connection'
+    access_token: Optional[str] = None
+    existing_session: Optional[dict] = None
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

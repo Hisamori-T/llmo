@@ -1,8 +1,10 @@
-# LLMO Score - 完全版設計書 v4.0（再構築版）
+# LLMO Score - 完全版設計書 v4.1（再構築版）
 
 **プロジェクト名**: LLMO Score
-**バージョン**: 4.0（再構築版・SSOT）
+**バージョン**: 4.1（再構築版・SSOT）
 **作成日**: 2026-06-22
+**更新日**: 2026-06-23
+**変更履歴**: v4.1 — Phase 7（Automation）確定仕様を反映（ハルシネーション判定・クレジット挙動・スケジューラ方式・月次レポート・通知先解決）
 **設計方針**: B2B SaaS 代理店モデル × モジュールアーキテクチャ × 3ステップ一気通貫
 **最終目標**: 代理店がワンオペで、クライアントの「AI検索認知度（LLMO）」を**診断 → 実装 → 監視**まで一気通貫で運用できるツール
 
@@ -421,8 +423,15 @@ diagnoses(id PK, client_id FK, agency_id FK, executed_by FK,
           findings JSONB{strengths,weaknesses,opportunities},
           recommendations JSONB,        -- priority/category/action/impact/timeline
           projections JSONB{six_month,twelve_month},
-          raw_evidence JSONB)           -- Tavily取得本文・各AI生回答（監査/RAG用）
+          raw_evidence JSONB,           -- Tavily取得本文・各AI生回答（監査/RAG用）
+          source ENUM('manual','automation_monthly','automation_weekly') DEFAULT 'manual')
+                                        -- 実行起点の種別（月次レポート集約・監視差分基準に使用）
 ```
+> **source 列の運用ルール（v4.1 確定）**
+> - 既存行・手動診断（既存 router 経由）は `default='manual'` に倒れる。Diagnosis 本体のロジックは変更しない。
+> - `source` を明示セットするのは **Automation の execute() のみ**（書き込み側の責務）。月次自動実行は `automation_monthly`、週次監視は `automation_weekly` を渡す。
+> - 月次レポートの「年月ごと代表値集約」（Module G）と、監視の差分基準特定に使用する。
+
 **ai_analysis の構造**:
 ```
 { "gemini": {"mention":"mentioned|partial|not", "quality":0-3, "context":"...", "raw":"..."},
@@ -494,6 +503,26 @@ reports(id PK, client_id FK, agency_id FK, generated_by FK,
 **公開API**: `generateSimpleReport(diagnosis_id)` / `generateDetailedReport(diagnosis_id)` / `generateKeywordReport(keyword_set_id)` / `generateMonthlyReport(client_id,month)` / `deliverReport(report_id, channel)` / `share(report_id)→{token}` / `getPublic(token)`
 **依存**: Core(File,Notification), Diagnosis, Keyword, Client　**外部**: ReportLab / WeasyPrint
 
+> ### 月次レポート仕様（generate_monthly_report）v4.1 確定
+>
+> **責務分界**: 月次レポートの生成は Reporting の責務。Automation は `generate_monthly_report(client_id, month)` を**呼ぶだけ**で、PDF の中身・テンプレートは関知しない（依存方向: Automation → Reporting）。
+>
+> **入力**: `automation_logs.diff` ＋ 過去 `diagnoses` の時系列。
+>
+> **時系列の取得規約**:
+> - 「直近6ヶ月」ではなく **「直近6回分の月次診断」** を取得する。
+> - 同月に週次監視ぶきの診断が複数存在しうるため、**年月をキーに各月1点へ代表値集約**する。
+> - 代表値の選定優先順位: `source='automation_monthly'` の診断 → 無ければその月の最新 `diagnoses`。
+>
+> **件数による出し分け（最小条件）**:
+>
+> | 取得できた月次点数 | 出力 | 内容 |
+> |---|---|---|
+> | 1件（初回月） | 単月版 1-2p | 今月スコア / AI別認識 / 所見 / 来月施策（推移グラフは単点 or 省略） |
+> | 2件以上 | 推移版 4-6p | スコア推移グラフ / 前回比 diff / ハルシネーション有無 / 来月施策 |
+>
+> グラフ部のみ件数で分岐し、その他セクションは共通実装とする。「推移が描けない＝レポート無し」にはしない（月額サービスの体裁を保つ）。
+
 ### Module H: Billing
 **責務**: 親子アカウント課金・クレジット配分/消費・請求。
 **保持**:
@@ -502,22 +531,41 @@ subscriptions(id PK, agency_id FK, plan, billing_cycle, status, stripe_subscript
 child_accounts(id PK, agency_id FK, user_id FK, email, name, role,
                monthly_credit_limit, monthly_credit_used, credit_reset_date,
                active_session_id, assigned_client_ids JSONB, status, joined_at)
-api_credits(id PK, agency_id FK, monthly_limit, monthly_used, last_reset)
+api_credits(
+  id PK, agency_id FK UNIQUE,        -- 1代理店1行
+  monthly_limit INT,                  -- プラン由来（設計書3.1「代理店全体クレジット/月」）
+  monthly_used  INT DEFAULT 0,
+  last_reset    DATE
+)
 credit_usage(id PK, agency_id FK, child_account_id FK, amount, usage_type,
              resource_id, client_id, balance_after, created_at)
 credit_purchases(id PK, agency_id FK, purchased_by FK, amount, price, allocated_to, stripe_payment_id, expires_at)
 invoices(id PK, agency_id FK, amount, breakdown JSONB, status, stripe_invoice_id, created_at)
 ```
-**公開API**: `getSubscription` / `upgradePlan` / `switchToYearly` / `addChildAccount` / `removeChildAccount` / `getCredits` / `reallocateCredits` / `purchaseCredits` / `consumeCredit(child_id,amount,type)→{remaining}` / `calculateMonthlyCharge` / `getInvoices`
+**公開API**: `getSubscription` / `upgradePlan` / `switchToYearly` / `addChildAccount` / `removeChildAccount` / `getCredits` / `reallocateCredits` / `purchaseCredits` / `consumeCredit(child_id,amount,type)→{remaining}` / `calculateMonthlyCharge` / `getInvoices` / `consume_credit(agency_id,amount,usage_type,resource_id,initiated_by)→{remaining}` / `getAgencyCredits(agency_id)→{monthly_limit,monthly_used,remaining,last_reset}`
 **依存**: Core(Payment,User,Audit), Agency　**再利用例**: B2B SaaS課金基盤
+
+> **api_credits の運用ルール（自動実行枠）v4.1 確定**
+> - 自動実行（Automation）のクレジットは**この代理店全体枠から消費**する。per-member の `agency_members.monthly_credit_used/limit`（手動枠）とは**別管理**とし、自動実行が手動作業の枠を食い潰さないようにする。
+> - `monthly_limit` の初期値は**プラン（設計書3.1）由来**。プラン変更時に Billing が更新する。
+> - **月次リセットは専用ジョブを増やさず、worker の tick 内で遅延評価**する：`last_reset` が当月でなければ `monthly_used=0`、`last_reset=今月` に更新。
+> - 監査: 自動実行の消費は `credit_usage` に **`initiated_by = automation_schedules.member_id`（作成者）** を記録する。引き当て先は agency 枠、記録上の責任者は作成者、という分離。
 
 ### Module I: Automation（★STEP3・強化）
 **責務**: 週次/月次スケジュール実行で多LLMに再クエリ、前回との差分算出、ポジ/ネガ＋**ハルシネーション検知**、スコア推移、来月施策、自動配信（メール/Slack/LINE）。
 **保持**:
 ```
-automation_schedules(id PK, agency_id FK, client_id FK, schedule_type[weekly|monthly|custom],
-                     execution_day, tasks JSONB, channels JSONB[email|slack|line],
-                     last_execution, next_execution, status, created_at)
+automation_schedules(
+  id PK, agency_id FK, client_id FK, member_id FK,        -- member_id=作成者（監査用）
+  schedule_type ENUM('weekly','monthly','custom'),
+  execution_day  INT,        -- monthly:1-28 / weekly:0-6（0=Mon..6=Sun, Python weekday準拠）
+  execution_time TIME DEFAULT '09:00',                    -- Asia/Tokyo 固定実行時刻
+  channels  JSONB,           -- 送信チャネル選択 ["email","slack","line"]
+  recipients JSONB NULL,      -- {user_ids:[...], extra_emails:[...]} 未指定→admin全員にフォールバック
+  tasks     JSONB,
+  last_execution TIMESTAMPTZ, next_execution TIMESTAMPTZ,
+  status ENUM('active','paused'), created_at TIMESTAMPTZ
+)
 automation_logs(id PK, schedule_id FK, agency_id FK, client_id FK, executed_at,
                 diff JSONB,                 -- 前回比（スコア増減・新規ネガ言及）
                 alert_level[none|positive|warning|critical],
@@ -528,6 +576,55 @@ knowledge_base(id PK, agency_id FK, pattern_type, content TEXT, embedding VECTOR
 **公開API**: `createSchedule(client_id,config)` / `updateSchedule` / `pauseSchedule` / `getSchedulesByAgency` / `getLogs` / `executeManually(schedule_id)`
 **依存**: Core(Notification,Audit), Diagnosis, Reporting, Client　**外部**: スケジューラ（APScheduler/cron worker）, Gemini/GPT-4o
 **再利用例**: AIレピュテーション監視、定期診断プラットフォーム
+
+> ### I-1. スケジューラ方式（worker 内 APScheduler / DBポーリング型）v4.1 確定
+> - 定期ジョブは **api コンテナと分離した専用 worker コンテナ**で実行（重い多LLM処理を API から隔離）。
+> - worker は **1分間隔の tick** で `next_execution <= now()` の `active` 行を拾うディスパッチャ型。`automation_schedules` が**スケジュールの正本**。
+> - 多重発火防止: 取得は **`FOR UPDATE SKIP LOCKED`**（将来 worker 複数化しても重複実行しない）。
+> - レート/原価制御: 同時実行を **`Semaphore`（初期3）** で絞る。タイムゾーンは **`Asia/Tokyo`**。
+> - cron 構文は使用しない（DB駆動の動的スケジュールのため）。将来 Celery/Dramatiq へ移す場合も「tick が `automation_service.execute()` を呼ぶ」境界を保てば呼び出し元差し替えのみで済む。
+>
+> ### I-2. execution_day 規約と next_execution 初期計算 v4.1 確定
+> - **monthly**: `execution_day` は **1〜28 の整数**（29以上はバリデーションで拒否。将来「月末」は `-1` センチネルで別扱い）。
+> - **weekly**: `execution_day` は **0〜6（0=月 … 6=日、Python `date.weekday()` 準拠）**。cron/JS の日=0系と取り違えないこと。
+> - **next_execution 初期値**: 「**作成日以降の最初の該当日**」（未来日）。**作成時の即時実行はしない**（予期せぬクレジット消費・初回手動診断との重複を回避）。当日が `execution_day` と一致する場合は**翌周期**へ送る。
+> - 時刻は `execution_time`（既定 JST 09:00）で固定し、tick の1分粒度とズレないようにする。
+> - 即時に1回走らせたい要件は、自動スケジュールとは経路を分け `executeManually(schedule_id)`（公開API）で対応する。
+>
+> ### I-3. ハルシネーション検知ロジック v4.1 確定
+> 基本は **A＋B を常時**、**C は一次情報がある場合のみ**の条件付き。
+>
+> | type | 判定 | 前提 | severity/alert |
+> |------|------|------|----------------|
+> | `conflict` | 同一キーワードで Gemini と GPT-4o の `mention` が割れる／事実主張が矛盾 | 常時（2社回答） | warning |
+> | `regression` | 前回 `mentioned → not_mentioned` への転落、スコア大幅下落、新規ネガティブ文脈の出現 | 常時（前回診断あれば） | critical（転落時） |
+> | `factual_mismatch` | AI回答が一次情報 `content_sources` と矛盾 | `content_sources` がある場合のみ | warning |
+>
+> 実装注意: `conflict` の一次判定は構造化フィールドの食い違いで行い、事実主張レベルは追加LLM呼び出しで補完。`factual_mismatch` は補助フラグに留める。
+>
+> ```
+> hallucination_findings = [
+>   {type:"conflict",         keyword, gemini, gpt4o, severity},
+>   {type:"regression",       keyword, prev:"mentioned", now:"not_mentioned"},
+>   {type:"factual_mismatch", keyword, source_id, ai_claim, fact}
+> ]
+> ```
+>
+> ### I-4. 通知チャネルと送信先解決 v4.1 確定
+> - **チャネル資格情報（Slack webhook URL / LINE チャネルトークン）は `agency.settings.notification_channels`** に代理店単位で保持し、**`get_channel_config(agency_id, type)` アクセサ経由でのみ参照**する。`automation_schedules.channels` には**送信先チャネルの選択のみ**を持たせ、URL 実体は持たせない。
+> - シークレットはログ出力・APIレスポンスから**マスキング**必須。
+> - **送信先（宛先）の解決**:
+>   ```
+>   targets = recipients.user_ids があればそれ
+>             無ければ agency の admin ロール全員（フォールバック）
+>           + recipients.extra_emails（顧客等・代理店外アドレス、任意）
+>   ```
+> - **アラート種別ごとの出し分け**:
+>   ```
+>   critical / warning（順位下落・ネガ情報）→ recipients → admin
+>   insufficient_credits（クレジット不足）   → admin に限定（課金権限者）＋アップグレード誘導
+>   月次レポート配信                          → recipients → admin（＋顧客送付時は extra_emails）
+>   ```
 
 ---
 
@@ -577,21 +674,34 @@ growth_potential = 未対策キーワードの伸びしろ
 出力物はすべて「貼る/インポートするだけ」の状態にする。
 ```
 
-## 7.3 STEP3: 監視・保守
+## 7.3 STEP3: 監視・保守（確定仕様 v4.1）
 
+**実行基盤**: 専用 worker コンテナ内の APScheduler（DBポーリング型 tick・1分間隔・`Asia/Tokyo`）。`automation_schedules` を正本とし、`next_execution <= now()` の `active` 行を `FOR UPDATE SKIP LOCKED` で取得、`Semaphore(3)` で同時実行を制御。
+
+**execute(schedule_id) の処理順**:
 ```
-1. APScheduler（または worker コンテナ + cron）が next_execution を監視
-2. 週次/月次で 7.1 の診断を再実行（多LLM）
-3. 前回 diagnoses と差分算出:
-   - スコア増減、順位変動
-   - 新規ネガティブ言及・誤情報（ハルシネーション）の出現
-4. alert_level 判定 → critical/warning なら即時アラート
-5. 配信: メール（SendGrid）/ Slack（Webhook）/ LINE（Messaging API push）
-6. 月次レポート自動生成・配信
-7.（任意・将来）採用されたコンテンツのパターンを knowledge_base に蓄積（RAG）→ Contentモジュールの精度向上
+0. クレジット事前チェック（診断を走らせる前に api_credits 残量を確認）
+   └ 不足 → 診断を実行しない。automation_logs に alert_level="warning",
+            reason="insufficient_credits" を記録。next_execution を次の本来の周期へ前進
+            （毎分 tick で同じ行を掴まない）。admin に不足通知＋アップグレード誘導。終了。
+1. 再診断（多LLM: Gemini 2.5 + GPT-4o ＋ Tavily）。diagnoses に source="automation_monthly"
+   （週次は "automation_weekly"）で保存。
+2. 前回診断との差分算出（スコア増減・順位変動）。
+3. ハルシネーション検知（I-3: conflict / regression / factual_mismatch）。
+4. alert_level 判定 → critical/warning は即時アラート配信（送信先解決は I-4）。
+5. クレジット消費を commit（成功後に消費。途中失敗時は課金しない）。
+6. 月次タイミングのみ: reporting.generate_monthly_report() を呼び出し、サマリーPDFを生成・配信。
+   （週次はアラートのみ。月次でサマリーPDF、と分離）
+7. next_execution / last_execution を更新。
+8.（任意・将来）採用コンテンツのパターンを knowledge_base に蓄積（RAG）→ Content の精度向上。
 ```
 
-**LINE 実装メモ**: LINE Notify は終了済み。LINE公式アカウントを作成し Messaging API のチャネルアクセストークンで `POST https://api.line.me/v2/bot/message/push` を使用。無料枠は月200通のため、アラートは重要度フィルタ（critical/warning優先）で送信。
+**クレジット挙動の要点**:
+- 引き当て先は **agency 全体枠（api_credits）**。member 個人枠ではない。
+- **事前チェック＋成功後 commit**。残量不足はエラーではなく状態なので**リトライしない**。
+- 部分成功（片側 LLM 失敗等）の課金可否: 有効な結果が得られた場合のみ消費。
+
+**LINE 実装メモ**: LINE Notify は 2025/3 終了。LINE公式アカウント＋Messaging API の `POST https://api.line.me/v2/bot/message/push` を使用。無料枠は月200通のため、アラートは critical/warning を優先送信。
 
 ---
 

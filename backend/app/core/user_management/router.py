@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.shared.api.deps import CurrentUser, get_current_user, require_role
-from app.shared.db.firestore import db_get, db_query, db_update
+from app.shared.db.firestore import db_get, db_query, db_update  # noqa: F401 (db_get used in dashboard)
 from .schemas import UpdateProfileRequest, UserProfile
 
 router = APIRouter(tags=['user_management'])
@@ -81,10 +81,11 @@ async def get_dashboard(current_user: CurrentUser = Depends(get_current_user)):
     recent = sorted(diagnoses, key=lambda d: d.get('created_at', ''), reverse=True)[:5]
     recent_list = []
     for d in recent:
-        sc = d.get('scores', {})
+        sc = d.get('scores') or {}
+        client = await db_get('clients', d.get('client_id', '')) or {}
         recent_list.append({
-            'id': d.get('_id', ''),
-            'companyName': d.get('company_name', ''),
+            'id': d.get('diagnosis_id') or d.get('_id', ''),
+            'companyName': client.get('name', d.get('url', '')),
             'createdAt': d.get('created_at', ''),
             'scores': {
                 'aiAwareness': sc.get('ai_awareness', 0),

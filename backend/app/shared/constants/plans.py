@@ -36,9 +36,13 @@ PLAN_CONFIG = {
 CREDIT_COSTS = {
     'keyword_generation': 3,
     'simple_diagnosis': 5,
-    'detailed_diagnosis': 15,
+    'detailed_diagnosis': 20,  # 多LLM+Tavily化に伴いクレジット増（旧15）
+    'optimization': 10,         # STEP2 実装最適化（JSON-LD/FAQ/AI要約生成）
+    'content_article': 8,       # GEO5原則記事生成（Gemini）
     'simple_pdf': 2,
     'detailed_pdf': 5,
+    'automation_monthly': 12,   # 暫定（多LLM自動実行・運用後に調整）
+    'automation_weekly': 6,     # 暫定
 }
 
 ROLES = {

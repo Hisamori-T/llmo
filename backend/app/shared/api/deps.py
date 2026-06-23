@@ -1,12 +1,14 @@
+"""FastAPI dependencies — JWT-based auth (v4.0, Firebase Auth removed)."""
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
+import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.shared.db.firebase_auth import verify_id_token
-from app.shared.db.firestore import db_query, db_update
-from datetime import datetime, timezone
+from app.config import settings
+from app.shared.db.firestore import db_get, db_query, db_update
 
 security = HTTPBearer()
 
@@ -27,27 +29,36 @@ async def get_current_user(
     x_session_id: Optional[str] = Header(None, alias='X-Session-Id'),
 ) -> CurrentUser:
     try:
-        decoded = await verify_id_token(credentials.credentials)
-        user_id: str = decoded['uid']
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired token')
+        payload = jwt.decode(
+            credentials.credentials,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Token expired')
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token')
 
-    if not x_session_id:
+    if payload.get('type') != 'access':
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token type')
+
+    user_id: str = payload['sub']
+    token_session_id: str = payload.get('session_id', '')
+
+    # Accept session_id from token or from header (header takes precedence for compat)
+    resolved_session_id = x_session_id or token_session_id
+    if not resolved_session_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session ID required')
 
-    sessions = await db_query(
-        'sessions',
-        filters=[('session_id', '==', x_session_id)],
-        limit=1,
-    )
-    if not sessions:
+    # Direct PK lookup (session id = DB id since v4.1 simplification)
+    session = await db_get('sessions', resolved_session_id)
+    if not session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session expired or invalid')
 
-    session = sessions[0]
     if session.get('user_id') != user_id or session.get('status') != 'active':
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session expired or invalid')
 
-    await db_update('sessions', session['_id'], {
+    await db_update('sessions', resolved_session_id, {
         'last_activity': datetime.now(timezone.utc).isoformat(),
     })
 
@@ -67,9 +78,9 @@ async def get_current_user(
         agency_id=session['agency_id'],
         member_id=member['_id'],
         role=member['role'],
-        session_id=x_session_id,
-        email=decoded.get('email', ''),
-        display_name=decoded.get('name', ''),
+        session_id=resolved_session_id,
+        email=payload.get('email', ''),
+        display_name=payload.get('display_name', ''),
     )
 
 

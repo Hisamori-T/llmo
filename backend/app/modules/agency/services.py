@@ -1,8 +1,10 @@
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.shared.db.firebase_auth import create_firebase_user
+import bcrypt
+
 from app.shared.db.firestore import db_add, db_get, db_query, db_set, db_update
 from app.shared.constants.plans import PLAN_CONFIG
 
@@ -78,20 +80,24 @@ class AgencyService:
         if len(active_non_admin) >= max_members:
             raise ValueError(f'Max child accounts ({max_members}) reached for this plan')
 
-        import secrets
-        temp_password = secrets.token_urlsafe(16)
-        try:
-            new_user_id = await create_firebase_user(email, temp_password, display_name)
-        except Exception as e:
-            raise ValueError(f'Failed to create user: {e}')
+        existing_user = await db_query('users', filters=[('email', '==', email)], limit=1)
+        if existing_user:
+            new_user_id = existing_user[0]['_id']
+        else:
+            temp_password = secrets.token_urlsafe(16)
+            password_hash = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
+            new_user_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            await db_set('users', new_user_id, {
+                'email': email,
+                'password_hash': password_hash,
+                'email_verified': False,
+                'display_name': display_name,
+                'created_at': now,
+                'updated_at': now,
+            })
 
         now = datetime.now(timezone.utc).isoformat()
-        await db_set('users', new_user_id, {
-            'email': email,
-            'display_name': display_name,
-            'created_at': now,
-            'updated_at': now,
-        })
 
         member_id = str(uuid.uuid4())
         await db_set('agency_members', member_id, {

@@ -29,6 +29,9 @@ venv/
 # Reports
 backend/reports/*.pdf
 
+# Type cache
+.mypy_cache/
+
 # OS
 .DS_Store
 Thumbs.db

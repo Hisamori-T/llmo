@@ -1,39 +1,29 @@
 import axios from 'axios';
-import { auth } from './firebase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'https://llmo.fact-ally.com/api';
+
+// Access token held in memory — never persisted to localStorage
+let _accessToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  _accessToken = token;
+}
 
 export const apiClient = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
-// Wait for Firebase Auth to initialize before returning currentUser
-function getAuthUser(): Promise<import('firebase/auth').User | null> {
-  return new Promise((resolve) => {
-    const user = auth.currentUser;
-    if (user !== undefined) {
-      resolve(user);
-      return;
-    }
-    // Firebase not yet initialized — wait for first auth state
-    const unsub = auth.onAuthStateChanged((u) => {
-      unsub();
-      resolve(u);
-    });
-  });
+function getStorage(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(key);
 }
 
-apiClient.interceptors.request.use(async (config) => {
-  const user = await getAuthUser();
-  if (user) {
-    const token = await user.getIdToken();
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
-  if (sessionId) {
-    config.headers['X-Session-Id'] = sessionId;
-  }
+apiClient.interceptors.request.use((config) => {
+  if (_accessToken) config.headers.Authorization = `Bearer ${_accessToken}`;
+  const sessionId = getStorage('session_id');
+  if (sessionId) config.headers['X-Session-Id'] = sessionId;
   return config;
 });
 
@@ -43,11 +33,17 @@ apiClient.interceptors.response.use(
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
-      const user = auth.currentUser;
-      if (user) {
-        const token = await user.getIdToken(true);
-        original.headers.Authorization = `Bearer ${token}`;
+      try {
+        // No body — refresh_token sent automatically as httpOnly cookie
+        const res = await axios.post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true });
+        const { access_token } = res.data;
+        setAccessToken(access_token);
+        original.headers.Authorization = `Bearer ${access_token}`;
         return apiClient(original);
+      } catch {
+        // Refresh failed — clear in-memory token; auth-context will redirect
+        setAccessToken(null);
+        if (typeof window !== 'undefined') localStorage.removeItem('session_id');
       }
     }
     return Promise.reject(error);

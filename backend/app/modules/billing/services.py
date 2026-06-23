@@ -1,9 +1,11 @@
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
 
 from app.config import settings
-from app.shared.db.firestore import db_get, db_update
+from app.shared.db.firestore import db_get, db_query, db_set, db_update
 from app.shared.constants.plans import PLAN_CONFIG
 
 
@@ -128,6 +130,8 @@ class BillingService:
             await self._handle_subscription_updated(data)
         elif event_type == 'customer.subscription.deleted':
             await self._handle_subscription_deleted(data)
+        elif event_type == 'invoice.payment_succeeded':
+            await self._handle_invoice_paid(data)
         elif event_type == 'invoice.payment_failed':
             await self._handle_payment_failed(data)
 
@@ -179,11 +183,34 @@ class BillingService:
         if agency_id:
             await db_update('agencies', agency_id, {'status': 'canceled'})
 
+    async def _handle_invoice_paid(self, invoice: dict) -> None:
+        customer_id = invoice.get('customer')
+        if not customer_id:
+            return
+        agencies = await db_query('agencies', filters=[('stripe_customer_id', '==', customer_id)], limit=1)
+        if agencies:
+            await self._save_invoice(agencies[0]['_id'], invoice)
+
     async def _handle_payment_failed(self, invoice: dict) -> None:
         customer_id = invoice.get('customer')
         if not customer_id:
             return
-        from app.shared.db.firestore import db_query
         agencies = await db_query('agencies', filters=[('stripe_customer_id', '==', customer_id)], limit=1)
         if agencies:
             await db_update('agencies', agencies[0]['_id'], {'status': 'past_due'})
+
+    async def _save_invoice(self, agency_id: str, stripe_invoice: dict) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        invoice_id = str(uuid.uuid4())
+        await db_set('invoices', invoice_id, {
+            'invoice_id': invoice_id,
+            'agency_id': agency_id,
+            'amount': stripe_invoice.get('amount_paid', 0),
+            'currency': stripe_invoice.get('currency', 'jpy'),
+            'status': stripe_invoice.get('status', ''),
+            'period_start': str(stripe_invoice.get('period_start', '')),
+            'period_end': str(stripe_invoice.get('period_end', '')),
+            'pdf_url': stripe_invoice.get('invoice_pdf'),
+            'stripe_invoice_id': stripe_invoice.get('id', ''),
+            'created_at': now,
+        })

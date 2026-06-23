@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.config import settings
 from app.shared.api.deps import CurrentUser, get_current_user, require_role
+from app.shared.constants.plans import CREDIT_COSTS
 from .schemas import BillingInfo, CheckoutRequest, Invoice
 from .services import BillingService
 
@@ -53,6 +54,12 @@ async def create_portal(
         return {'portal_url': url}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get('/credit-costs')
+async def get_credit_costs(current_user: CurrentUser = Depends(get_current_user)):
+    """plans.py の単価表を返す（フロントエンドのハードコード排除用）。"""
+    return CREDIT_COSTS
 
 
 @router.post('/webhook', status_code=status.HTTP_200_OK)

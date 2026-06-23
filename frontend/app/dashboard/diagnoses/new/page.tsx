@@ -6,8 +6,6 @@ import { apiClient } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import toast from 'react-hot-toast';
 
-const CREDIT_COSTS = { simple: 5, detailed: 15 } as const;
-
 interface Client {
   client_id: string;
   name: string;
@@ -20,6 +18,7 @@ export default function NewDiagnosisPage() {
   const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
+  const [creditCosts, setCreditCosts] = useState<Record<string, number>>({ simple_diagnosis: 5, detailed_diagnosis: 20 });
   const [form, setForm] = useState<{ clientId: string; keywords: string; type: 'simple' | 'detailed' }>({
     clientId: '',
     keywords: '',
@@ -28,7 +27,8 @@ export default function NewDiagnosisPage() {
   const [loading, setLoading] = useState(false);
   const [suggestLoading, setSuggestLoading] = useState(false);
 
-  const creditsNeeded = CREDIT_COSTS[form.type];
+  const COST_KEY = { simple: 'simple_diagnosis', detailed: 'detailed_diagnosis' } as const;
+  const creditsNeeded = creditCosts[COST_KEY[form.type]] ?? 5;
   const creditsRemaining = (user?.monthlyCreditsLimit ?? 0) - (user?.monthlyCreditsUsed ?? 0);
   const canRun = creditsRemaining >= creditsNeeded && !!form.clientId;
   const selectedClient = clients.find((c) => c.client_id === form.clientId);
@@ -38,6 +38,9 @@ export default function NewDiagnosisPage() {
       .then((res) => setClients(res.data || []))
       .catch(() => {})
       .finally(() => setClientsLoading(false));
+    apiClient.get('/billing/credit-costs')
+      .then((res) => setCreditCosts(res.data))
+      .catch(() => {});
   }, []);
 
   const handleAutoKeywords = async () => {
@@ -134,7 +137,7 @@ export default function NewDiagnosisPage() {
                     <input type="radio" name="type" value={t} checked={form.type === t} onChange={() => setForm({ ...form, type: t })} className="accent-primary-500" />
                     <div>
                       <p className="text-sm font-medium text-slate-800">{t === 'simple' ? 'シンプル診断' : '詳細診断'}</p>
-                      <p className="text-xs text-body">{CREDIT_COSTS[t]}クレジット</p>
+                      <p className="text-xs text-body">{creditCosts[COST_KEY[t]] ?? '?'}クレジット</p>
                     </div>
                   </label>
                 ))}

@@ -1,13 +1,14 @@
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from google import genai
 
 from app.config import settings
 from app.shared.db.firestore import db_get, db_query, db_set, db_update
+from app.shared.llm.orchestrator import ask_single
 from app.shared.utils.credits import check_and_deduct
 
 KEYWORD_PROMPT = """\
@@ -132,23 +133,27 @@ SUGGEST_PROMPT = """\
 """
 
 
+def _strip_fences(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r'^```(?:json)?\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+    return text
+
+
 async def suggest_keywords(company_name: str, industry: str, location: str = '') -> list[str]:
-    ai_client = genai.Client(api_key=settings.gemini_api_key)
     prompt = SUGGEST_PROMPT.format(
         company_name=company_name,
         industry=industry,
         location=location or '未指定',
     )
-    response = await ai_client.aio.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt,
-    )
-    text = response.text.strip()
-    if text.startswith('```'):
-        lines = text.split('\n')
-        text = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
-    parsed = json.loads(text)
-    return [str(k) for k in parsed.get('keywords', [])]
+    resp = await ask_single(prompt, model='gemini')
+    if not resp.ok:
+        return []
+    try:
+        parsed = json.loads(_strip_fences(resp.text))
+        return [str(k) for k in parsed.get('keywords', [])]
+    except Exception:
+        return []
 
 
 async def _fetch_competitors(
@@ -198,8 +203,6 @@ async def _generate_keywords_with_gemini(
     location: str,
     competitors: list,
 ) -> list:
-    client = genai.Client(api_key=settings.gemini_api_key)
-
     competitors_text = '\n'.join(
         f'- {c.get("name", "")} ({c.get("url", "")})'
         for c in competitors
@@ -214,15 +217,9 @@ async def _generate_keywords_with_gemini(
         n=len(competitors),
     )
 
-    response = await client.aio.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt,
-    )
-    text = response.text.strip()
+    resp = await ask_single(prompt, model='gemini')
+    if not resp.ok:
+        raise RuntimeError(f'Gemini keyword generation failed: {resp.error}')
 
-    if text.startswith('```'):
-        lines = text.split('\n')
-        text = '\n'.join(lines[1:-1] if lines[-1] == '```' else lines[1:])
-
-    parsed = json.loads(text)
+    parsed = json.loads(_strip_fences(resp.text))
     return parsed.get('keywords', [])

@@ -540,3 +540,569 @@
 - deps.py のデバッグコード(auto_error=False, print文)クリーンアップ
 
 ---
+
+## Session 2026-06-22 — Phase 0: 共通基盤（PostgreSQL / 自前JWT / Docker）
+
+### 作業内容（予定）
+- git init + `v4-rebuild` ブランチ作成（main = v3.0.0 baseline）
+- `docker-compose.yml`（api/web/db/nginx）作成
+- `backend/app/shared/db/models.py`（SQLAlchemy全テーブル）
+- `backend/app/shared/db/postgres.py`（db_get/db_set/db_query/db_update 互換レイヤー）
+- `backend/app/shared/db/firestore.py` → postgres.pyへのスタブ差替え
+- `backend/app/shared/db/firebase_auth.py` → 削除（スタブ）
+- `backend/app/core/authentication/` → 自前JWT（PyJWT + bcrypt）に完全差替え
+- `backend/app/shared/api/deps.py` → JWT検証に差替え
+- `backend/app/config.py` → JWT/DB設定追加、Firebase設定削除
+- `backend/requirements.txt` → SQLAlchemy/asyncpg/PyJWT/bcrypt追加、firebase-admin削除
+- `frontend/lib/api.ts` → JWT interceptorに差替え
+- `frontend/lib/auth-context.tsx` → Firebase依存を完全除去
+- `frontend/app/auth/login/page.tsx` → 直接APIコール
+- `frontend/app/auth/signup/page.tsx` → 直接APIコール
+
+
+### 作業結果（Phase 0 完了）
+- `backend/app/shared/db/models.py` 新規作成 — SQLAlchemy DeclarativeBase + 9テーブル定義（User/Agency/AgencyMember/Session/Client/KeywordSet/Diagnosis/Report/Invoice）
+- `backend/app/shared/db/postgres.py` 新規作成 — async engine + db_get/db_set/db_query/db_update/db_delete/db_add 互換レイヤー（Firestore と同一 I/F）
+- `backend/app/shared/db/firestore.py` 差替え — postgres.py への re-export スタブ（Firebase 依存ゼロ）
+- `backend/app/shared/db/firebase_auth.py` 差替え — NotImplementedError スタブ（Firebase Auth 依存ゼロ）
+- `backend/app/config.py` 更新 — firebase_project_id 削除、database_url/jwt_secret/jwt_algorithm/access_token_ttl/refresh_token_ttl/openai_api_key/tavily_api_key/line_channel_* 追加
+- `backend/requirements.txt` 更新 — firebase-admin/google-cloud-firestore 削除、sqlalchemy[asyncio]/asyncpg/alembic/PyJWT/bcrypt/openai 追加
+- `backend/app/core/authentication/schemas.py` 差替え — SignupRequest(email/password)・LoginRequest(email/password)・RefreshRequest・各レスポンスに access_token/refresh_token 追加
+- `backend/app/core/authentication/services.py` 差替え — bcrypt パスワード検証 + PyJWT トークン発行（signup/login/refresh/logout）
+- `backend/app/core/authentication/router.py` 差替え — POST /auth/refresh エンドポイント追加
+- `backend/app/shared/api/deps.py` 差替え — Firebase verify_id_token → jwt.decode による JWT 検証
+- `backend/app/modules/agency/services.py` 更新 — create_firebase_user 呼び出し削除、直接 PostgreSQL ユーザー作成に変更
+- `frontend/lib/firebase.ts` 差替え — null スタブ（Firebase SDK 依存ゼロ）
+- `frontend/lib/api.ts` 差替え — JWT interceptor（access_token/refresh_token/session_id を localStorage から取得、401時にリフレッシュ）
+- `frontend/lib/auth-context.tsx` 差替え — Firebase onAuthStateChanged 除去、JWT ベース（setTokens/logout）
+- `frontend/app/auth/login/page.tsx` 差替え — Firebase signIn 除去、直接 POST /auth/login（email/password）
+- `frontend/app/auth/signup/page.tsx` 差替え — Firebase createUser 除去、直接 POST /auth/signup（email/password）
+- `infra/nginx/llmo.conf` 更新 — Docker Compose upstream（api:8006 / web:3001）に変更、SSL パスを /etc/ssl/llmo/ に変更
+- `docker-compose.yml` 新規作成 — db/api/web/nginx 4サービス構成
+- `backend/Dockerfile` 更新 — libpq-dev 追加、PORT=8006
+- `frontend/Dockerfile` 新規作成 — multi-stage build (next standalone)
+
+### 変更ファイル
+- backend/app/shared/db/models.py（新規）
+- backend/app/shared/db/postgres.py（新規）
+- backend/app/shared/db/firestore.py（差替え）
+- backend/app/shared/db/firebase_auth.py（差替え）
+- backend/app/config.py
+- backend/requirements.txt
+- backend/app/core/authentication/schemas.py
+- backend/app/core/authentication/services.py
+- backend/app/core/authentication/router.py
+- backend/app/shared/api/deps.py
+- backend/app/modules/agency/services.py
+- frontend/lib/firebase.ts（スタブ）
+- frontend/lib/api.ts
+- frontend/lib/auth-context.tsx
+- frontend/app/auth/login/page.tsx
+- frontend/app/auth/signup/page.tsx
+- infra/nginx/llmo.conf
+- docker-compose.yml（新規）
+- backend/Dockerfile
+- frontend/Dockerfile（新規）
+
+### 次のアクション（Phase 1: Core モジュール移行）
+- Phase 1 DoD: 全 Core（session/user/notification/payment/file/settings）が PostgreSQL で動作
+- `backend/app/core/session_management/` — sessions テーブルへの移行確認
+- `backend/app/core/user_management/` — users テーブルへの移行確認
+- `backend/app/modules/*/services.py` 全体を PostgreSQL I/F 動作確認
+- LINE Messaging API 通知チャネル追加
+- `.env.example` 更新（NEXT_PUBLIC_FIREBASE_* 削除、JWT_SECRET/DATABASE_URL 追加）
+
+---
+
+## Session 2026-06-23 — Phase 1: Core PostgreSQL 移行 + LINE 通知
+
+### 作業内容（予定）
+- `backend/app/main.py` — startup で `init_db()` 呼び出し（テーブル自動作成）、バージョン v4.0.0
+- `backend/app/core/user_management/router.py` — `/users/dashboard` の `company_name` → client lookup 修正
+- `frontend/app/dashboard/page.tsx` — Phase 0 cleanup: `firebaseUser` 依存を `user` に変更
+- `backend/app/shared/notifications/line.py` — LINE Messaging API 送信サービス新規作成
+- `backend/app/core/notification/router.py` — 通知テスト・ステータス確認エンドポイント実装
+- `backend/app/main.py` — notification router 追加、version 4.0.0
+
+---
+
+### 作業結果（Phase 1 完了）
+- `backend/app/main.py` — `@asynccontextmanager lifespan` で `init_db()` startup 呼び出し追加、version → 4.0.0、notification router 追加
+- `backend/app/core/user_management/router.py` — `/users/dashboard` の `company_name` を `client_id` 経由で client lookup するよう修正
+- `frontend/app/dashboard/page.tsx` — `firebaseUser` 依存を `user` に変更（Phase 0 cleanup）
+- `backend/app/shared/notifications/line.py` 新規作成 — LINE Messaging API Push Message 送信サービス（critical/warning のみ送信、月200通無料枠対応）
+- `backend/app/core/notification/router.py` — `GET /notifications/status`（チャネル設定状況）、`POST /notifications/test/line`（admin のみ）実装
+- `backend/app/core/authentication/schemas.py` — `ForgotPasswordRequest` / `ResetPasswordRequest` 追加
+- `backend/app/core/authentication/services.py` — `forgot_password()` / `reset_password()` 実装（JWT リセットトークン + SendGrid）
+- `backend/app/core/authentication/router.py` — `POST /auth/forgot-password` / `POST /auth/reset-password` 追加
+- `frontend/app/auth/reset-password/page.tsx` — Firebase `sendPasswordResetEmail` 除去 → バックエンド API コールに差替え
+- Firebase import ゼロ確認（frontend *.tsx / backend *.py 全件 grep）
+
+### 変更ファイル
+- backend/app/main.py
+- backend/app/core/user_management/router.py
+- backend/app/core/authentication/schemas.py
+- backend/app/core/authentication/services.py
+- backend/app/core/authentication/router.py
+- backend/app/core/notification/router.py
+- backend/app/shared/notifications/__init__.py（新規）
+- backend/app/shared/notifications/line.py（新規）
+- frontend/app/dashboard/page.tsx
+- frontend/app/auth/reset-password/page.tsx
+
+### Phase 1 DoD チェック
+- 全 Core が PostgreSQL 永続化で動作 ✅（firestore.py = postgres.py re-export、init_db で自動テーブル作成）
+- 通知に LINE チャネル追加 ✅（shared/notifications/line.py + /notifications/test/line）
+- Firebase import ゼロ ✅
+
+### 次のアクション（Phase 2: agency / client / billing）
+- Phase 2 DoD: 親子アカウント・クレジット消費が PostgreSQL で動作
+- `backend/app/modules/agency/` — router/services/schemas 確認・PostgreSQL 動作検証
+- `backend/app/modules/client/` — 同上
+- `backend/app/modules/billing/` — Stripe Webhook + invoice テーブル連携
+
+---
+
+## Session 2026-06-23 — Phase 2: agency / client / billing PostgreSQL 動作確認・修正
+
+### 作業内容（予定）
+- `backend/app/shared/db/models.py` — Client に `tags` カラム追加、AgencyMember に `invited_by` カラム追加
+- `backend/app/modules/billing/services.py` — inline import 修正、invoice テーブル保存追加（Webhook 時）
+- `backend/app/modules/diagnosis/services.py` — クレジット消費ロジック確認（PostgreSQL で動作するか）
+- Phase 2 DoD 確認: 親子アカウント・クレジット消費が PostgreSQL で動作
+
+---
+
+### 作業結果（Phase 2 完了）
+- `backend/app/shared/db/models.py` — `Client` に `tags` JSONB カラム追加、`AgencyMember` に `invited_by` カラム追加（PostgreSQL への書き込み時に無視されていたフィールドを修正）
+- `backend/app/shared/db/postgres.py` — `db_set` の `on_conflict_do_update(set_=...)` から PK (`id`) を除外（PostgreSQL がコンフリクト対象カラムの更新を拒否するバグを修正）
+- `backend/app/modules/billing/services.py` — inline import 削除（モジュールトップにまとめ）、`invoice.payment_succeeded` Webhook 追加、`_save_invoice()` で invoices テーブルへ保存するロジック追加
+- `backend/app/modules/diagnosis/services.py` — 診断完了更新を `db_set({**db_get(...)})` から `db_update(...)` に変更（不要な fetch を削除）
+- クレジット消費パス確認: `check_and_deduct` → `db_get/db_update('agency_members')` → PostgreSQL ✅
+
+### 変更ファイル
+- backend/app/shared/db/models.py
+- backend/app/shared/db/postgres.py
+- backend/app/modules/billing/services.py
+- backend/app/modules/diagnosis/services.py
+
+### Phase 2 DoD チェック
+- 親子アカウント（invite/update/remove）が PostgreSQL で動作 ✅（agency_members テーブル、tags/invited_by カラム追加済み）
+- クレジット消費が PostgreSQL で動作 ✅（check_and_deduct → db_update(agency_members)）
+- Stripe Webhook → invoices テーブル保存 ✅
+
+### 次のアクション（Phase 3: 診断コア再設計 — 多LLM + Tavily）
+- Phase 3 DoD: detailed 診断で Gemini + GPT-4o の多LLM + Tavily 引用スコアが出力
+- `backend/app/shared/llm/` — 多LLMオーケストレータ（Gemini 2.5 / GPT-4o 同一I/F、asyncio.gather 並列）
+- `backend/app/shared/llm/tavily.py` — Tavily Web クロール連携
+- `backend/app/modules/diagnosis/services.py` — detailed を多LLM化（simple は Gemini 単体のまま）
+
+---
+
+## Session 2026-06-23 — Phase 3: 診断コア再設計（多LLM + Tavily）
+
+### 作業内容（予定）
+- `backend/app/shared/db/models.py` — Diagnosis に `ai_analysis` / `keyword_analysis` / `site_analysis` / `projections` / `raw_evidence` JSONB カラム追加
+- `backend/app/shared/constants/plans.py` — `detailed_diagnosis: 15 → 20` クレジット更新
+- `backend/app/shared/llm/` 新規作成 (base / gemini_provider / openai_provider / orchestrator / tavily)
+- `backend/app/modules/diagnosis/services.py` — detailed を多LLM+Tavily化、引用スコア算出実装
+
+### 作業結果（Phase 3 完了）
+- `backend/app/shared/db/models.py` — Diagnosis モデルに `ai_analysis` / `keyword_analysis` / `site_analysis` / `projections` / `raw_evidence`（JSONB）追加
+- `backend/app/shared/constants/plans.py` — `detailed_diagnosis: 15 → 20`（多LLM APIコスト増加対応）
+- `backend/app/shared/llm/base.py` 新規作成 — `LLMResponse` dataclass（text/raw/model/cost_usd/error/ok）
+- `backend/app/shared/llm/gemini_provider.py` 新規作成 — Gemini 2.5 Flash（temperature=0、asyncio.to_thread + wait_for タイムアウト）
+- `backend/app/shared/llm/openai_provider.py` 新規作成 — GPT-4o（AsyncOpenAI、API キー未設定時は error LLMResponse を返してフォールバック）
+- `backend/app/shared/llm/orchestrator.py` 新規作成 — `ask_parallel()`（Gemini+GPT-4o 並列、片方失敗でも継続）、`ask_single()`
+- `backend/app/shared/llm/tavily.py` 新規作成 — Tavily API ウェブ検索（`search_business` / `search_keyword`、API キー未設定時は [] を返す）
+- `backend/app/modules/diagnosis/services.py` 全面書き換え:
+  - `simple` モード: Gemini 単体（既存 `_run_simple_diagnosis` として維持）
+  - `detailed` モード: Tavily grounding → キーワード毎に `ask_parallel()` → 引用スコア計算（`keyword_score = Σ(quality/3)/N_ai × 100`、overall = 平均）→ Gemini で findings/recommendations/projections を合成
+  - `DiagnosisService.run()` — `diagnosis_type == 'detailed'` で分岐
+- `backend/.env` 新規作成（`OPENAI_API_KEY` / `GEMINI_API_KEY` 設定済み）
+
+### 変更ファイル
+- backend/app/shared/db/models.py
+- backend/app/shared/constants/plans.py
+- backend/app/shared/llm/base.py（新規）
+- backend/app/shared/llm/gemini_provider.py（新規）
+- backend/app/shared/llm/openai_provider.py（新規）
+- backend/app/shared/llm/orchestrator.py（新規）
+- backend/app/shared/llm/tavily.py（新規）
+- backend/app/modules/diagnosis/services.py
+- backend/.env（新規）
+
+### Phase 3 DoD チェック
+- detailed 診断で Gemini + GPT-4o の AI 別認識スコアが出力 ✅
+- 引用スコア（citation score）計算ロジック実装済み ✅
+- Tavily Web グラウンディング実装済み ✅
+- simple モードは Gemini 単体のまま ✅
+
+### 次のアクション（Phase 4: keyword / reporting モジュール）
+- `backend/app/modules/keyword/` — PostgreSQL 対応確認・修正
+- `backend/app/modules/reporting/` — PostgreSQL 対応確認・修正
+
+---
+
+## Session 2026-06-23 — Phase 4: keyword / reporting モジュール PostgreSQL 対応
+
+### 作業内容（予定）
+- `backend/app/modules/keyword/services.py` — `genai.Client()` 直呼びを `ask_single()` に統一（共通 LLM レイヤー経由）
+- `backend/app/modules/reporting/pdf_generator.py` — detailed モードの `recommendations`（dict形式）対応
+
+### 作業結果（Phase 4 完了）
+- `backend/app/modules/keyword/services.py` 更新:
+  - `from google import genai` 削除 → `from app.shared.llm.orchestrator import ask_single` に統一
+  - `suggest_keywords()` — `genai.Client().aio.models.generate_content()` → `ask_single(model='gemini')`
+  - `_generate_keywords_with_gemini()` — 同上
+  - `_strip_fences()` ヘルパー追加（コードブロック除去）
+  - modules 配下の `genai` import がゼロになったことを確認 ✅
+- `backend/app/modules/reporting/pdf_generator.py` 更新:
+  - recommendations の各要素が `dict` の場合（detailed モード）に `action / impact / timeline` を展開して表示
+  - `str` の場合（simple モード）は従来通り表示（後方互換維持）
+
+### 変更ファイル
+- backend/app/modules/keyword/services.py
+- backend/app/modules/reporting/pdf_generator.py
+
+### Phase 4 DoD チェック
+- keyword / reporting モジュールが PostgreSQL 互換 db_* 経由で動作 ✅
+- LLM 呼び出しが全て shared/llm/ 経由に統一 ✅
+- PDF 生成が detailed/simple 両モードの recommendations 形式に対応 ✅
+
+### 次のアクション（Phase 5: optimization モジュール新規作成）
+- `backend/app/modules/optimization/` — 新規作成（LLMO改善提案の自動スケジューリング・追跡）
+
+---
+
+## Session 2026-06-23 — Phase 5: optimization モジュール新規作成
+
+### 作業内容（予定）
+- 3ステップ事業モデル STEP2「実装最適化」（一時金フェーズ）担当モジュール
+- 診断結果を「貼るだけ/インポートするだけ」の成果物に変換する
+- 生成物5種: JSON-LD / AI向け会社紹介文 / robots.txt / FAQページ構成案 / WPプラグイン用プリセット
+
+### 作業結果（Phase 5 完了）
+- `backend/app/shared/db/models.py` — `Optimization` テーブル追加（json_ld/ai_summary/robots_txt/faq_structure/wp_preset JSONB）
+- `backend/app/shared/constants/plans.py` — `optimization: 10` クレジット追加
+- `backend/app/modules/optimization/__init__.py` — 新規
+- `backend/app/modules/optimization/schemas.py` — `CreateOptimizationRequest` / `OptimizationResponse`
+- `backend/app/modules/optimization/services.py` — 新規作成:
+  - `_generate_artifacts()`: Gemini 2並列呼び出し（asyncio.gather）
+    - Prompt 1: JSON-LD（schema.org 型自動判定）+ AI要約文
+    - Prompt 2: FAQ構成案（8〜10件 Q&A）
+    - 導出1: robots.txt（主要AIクローラー全許可テンプレート）
+    - 導出2: WordPress プリセット（Yoast SEO / Schema Pro 両対応）
+  - FAQを `mainEntity` として JSON-LD に埋め込み（FAQPage 準拠）
+  - `OptimizationService.create()` / `get()` / `list_optimizations()`
+- `backend/app/modules/optimization/router.py` — 新規作成:
+  - `POST /optimizations` — 実行（10クレジット消費）
+  - `GET /optimizations` — 一覧（?client_id フィルタ対応）
+  - `GET /optimizations/{id}` — 詳細
+  - `GET /optimizations/{id}/download/{artifact}` — 個別成果物ダウンロード（json_ld/ai_summary/robots_txt/faq_structure/wp_preset）
+- `backend/app/main.py` — `optimization_router` 追加（`/optimizations`）
+
+### 変更ファイル
+- backend/app/shared/db/models.py
+- backend/app/shared/constants/plans.py
+- backend/app/modules/optimization/__init__.py（新規）
+- backend/app/modules/optimization/schemas.py（新規）
+- backend/app/modules/optimization/services.py（新規）
+- backend/app/modules/optimization/router.py（新規）
+- backend/app/main.py
+
+### Phase 5 DoD チェック
+- Diagnosis に依存し、完了済み診断のみ受け付ける ✅
+- 5種の成果物を自動生成 ✅（JSON-LD / AI要約 / robots.txt / FAQ / WP preset）
+- schema.org 型を業種から自動判定（Gemini に委任）✅
+- 個別成果物のファイルダウンロード対応 ✅
+- 「貼るだけ」という設計の限界を明確化（WordPress貼付作業は代理店手作業に委ねる）✅
+
+### 次のアクション（Phase 6: content モジュール新規作成 または Phase 7: automation）
+- Phase 6: content — ブログ記事・FAQページ本文の自動生成
+- Phase 7: automation — 定期診断スケジューリング・アラート通知
+
+---
+
+## Session 2026-06-23 — Phase 6: content モジュール新規作成
+
+### 作業内容（予定）
+- SSOT Module F 準拠: GEO（生成エンジン最適化）5原則記事生成
+- 一次情報登録（interview/doc/url）→ GEO5原則記事生成 → 編集フロー
+- content_sources / content_articles テーブル新規作成
+
+### 作業結果（Phase 6 完了）
+- `backend/app/shared/db/models.py` — `ContentSource` / `ContentArticle` テーブル追加
+  - ContentSource: type(interview|doc|url), title, body TEXT, source_url
+  - ContentArticle: target_keyword, outline JSONB, body_markdown TEXT, geo_checklist JSONB, source_ids JSONB, status(draft|edited|published)
+- `backend/app/shared/constants/plans.py` — `content_article: 8` クレジット追加
+- `backend/app/modules/content/services.py` 新規作成:
+  - `ContentSourceService.add()` — type=url 時は Tavily でページ内容を自動取得
+  - `ContentArticleService.generate()` — Gemini でGEO5原則準拠記事生成（90秒タイムアウト）
+    - 一次情報（sources）を本文に活用（他社との差別化）
+    - diagnosis_id（弱依存）から findings を取得して「解決策」として言及
+    - geo_checklist を Gemini が自己評価
+  - `ContentArticleService.update()` — 人手編集時に `_check_geo()` でチェックリスト再評価
+  - `_check_geo()` — 正規表現による GEO5 ヒューリスティック判定
+- `backend/app/modules/content/router.py` 新規作成:
+  - `POST /contents/sources` — 一次情報登録（クレジット消費なし）
+  - `GET /contents/sources` — 一覧（?client_id フィルタ）
+  - `GET /contents/sources/{id}` — 詳細
+  - `DELETE /contents/sources/{id}` — 削除
+  - `POST /contents/articles` — 記事生成（8cr消費）
+  - `GET /contents/articles` — 一覧
+  - `GET /contents/articles/{id}` — 詳細
+  - `PATCH /contents/articles/{id}` — 人手編集（status: draft→edited→published）
+- `backend/app/main.py` — `content_router` 追加（`/contents`）
+
+### 変更ファイル
+- backend/app/shared/db/models.py
+- backend/app/shared/constants/plans.py
+- backend/app/modules/content/__init__.py（新規）
+- backend/app/modules/content/schemas.py（新規）
+- backend/app/modules/content/services.py（新規）
+- backend/app/modules/content/router.py（新規）
+- backend/app/main.py
+
+### Phase 6 DoD チェック
+- 一次情報登録（interview/doc/url）が動作 ✅
+- GEO5原則プロンプトで Gemini 記事生成 ✅（3000文字以上・チェックリスト付き）
+- 診断結果（弱依存）を記事構成に反映 ✅
+- 人手編集フロー（PATCH + status 更新）✅
+- 「AI生成をそのまま出さず編集を価値とする」設計の明確化 ✅（draft→edited→published ワークフロー）
+
+### 次のアクション（Phase 7: automation モジュール強化）
+- APScheduler または cron worker によるスケジュール診断
+- 差分算出・ハルシネーション検知
+- email/Slack/LINE 配信・月次レポート自動生成
+
+---
+
+## Session 2026-06-23 — Phase 7: SSOT v4.1 更新 + automation モジュール完全実装
+
+### 作業内容
+- SSOT (`docs/redesign/LLMO-Score-COMPLETE-FINAL-v4.md`) を v4.1 に更新（Phase 7 確定仕様 5箇所を patch 適用）
+- Phase 7-0: models.py に 3テーブル追加（0a: api_credits / 0b: diagnoses.source 列 / 0c: automation_schedules + automation_logs）
+- Phase 7a: reporting — `generate_monthly_report()` + `generate_monthly_pdf()` 実装
+- Phase 7b: automation — services.py / router.py / schemas.py 完全実装、worker/main.py 新規作成
+
+### 変更ファイル
+- docs/redesign/LLMO-Score-COMPLETE-FINAL-v4.md（SSOT v4.1 更新）
+  - ヘッダー v4.0→v4.1、変更履歴追記
+  - Module C: diagnoses.source 列 + 運用ルール
+  - Module G: 月次レポート仕様節（件数による出し分け・年月集約規約）
+  - Module H: api_credits 拡張テーブル定義 + 運用ルール + 公開API追記
+  - Module I: automation_schedules 確定スキーマ + I-1〜I-4 節
+  - Section 7.3: 確定版処理フロー（0〜8ステップ）
+- backend/app/shared/db/models.py（ApiCredits / AutomationSchedule / AutomationLog 追加、Diagnosis.source 追加）
+- backend/app/shared/db/postgres.py（_COLLECTION_MAP 拡張: 新テーブル + optimization/content テーブル追加）
+- backend/app/modules/diagnosis/services.py（source パラメータ追加、automation 経由は check_and_deduct スキップ）
+- backend/app/modules/reporting/services.py（generate_monthly_report() 追加）
+- backend/app/modules/reporting/pdf_generator.py（generate_monthly_pdf() 追加: 単月版/推移版出し分け）
+- backend/app/modules/automation/schemas.py（新規: CreateScheduleRequest / UpdateScheduleRequest / ScheduleResponse / LogResponse）
+- backend/app/modules/automation/services.py（新規: CRUD + execute() + ハルシネーション検知 + 差分算出 + クレジット管理 + 通知）
+- backend/app/modules/automation/router.py（CRUD API: schedules / logs）
+- backend/app/core/notification/services.py（新規: NotificationService.send_automation_alert / get_channel_config）
+- backend/app/main.py（automation_router 追加）
+- backend/requirements.txt（apscheduler==3.10.4 追加）
+- worker/main.py（新規: APScheduler tick / FOR UPDATE SKIP LOCKED）
+
+### Phase 7 DoD チェック
+- SSOT v4.1 への全 5箇所パッチ適用 ✅
+- api_credits テーブル（agency 全体枠、月次リセット遅延評価） ✅
+- diagnoses.source 列（manual/automation_monthly/automation_weekly, default='manual'） ✅
+- automation_schedules 確定スキーマ（execution_day 規約・recipients・execution_time） ✅
+- next_execution 初期計算（作成日以降の未来日、当日は翌周期） ✅
+- execute() 処理順: 0(クレジット事前チェック)→1(再診断)→2(差分)→3(ハルシネーション)→4(アラート)→5(クレジット消費 commit)→6(月次のみ PDF)→7(next_execution 更新) ✅
+- ハルシネーション検知 A（conflict 常時）+ B（regression 常時）+ C（factual_mismatch 条件付き将来拡張） ✅
+- 通知先解決: recipients 指定 → 未指定は admin 全員フォールバック ✅
+- insufficient_credits: admin 限定通知、診断スキップ、リトライなし ✅
+- 月次のみ generate_monthly_report() 呼び出し、週次はアラートのみ ✅
+- チャネル資格情報は agency.settings.notification_channels 経由（I-4 規約） ✅
+- FOR UPDATE SKIP LOCKED で多重発火防止 ✅
+- Semaphore(3) で同時実行制限 ✅
+- worker は専用コンテナ（api から分離） ✅
+
+### 次のアクション（Phase 8: Frontend）
+- Phase 8: フロントエンドを新バックエンドに対応
+  - API 向き先変更
+  - /optimizations / /contents / /automation 画面追加
+- Phase 9: docker-compose 統合・本番切替・E2E
+
+---
+
+## Session 2026-06-23 — FIX-1〜7: Phase 0〜6 品質修正
+
+### 作業内容（予定）
+
+**FIX-1 (shared/db)**: Alembic 導入 + トランザクションヘルパー
+- `alembic init` → `env.py` 設定（target_metadata = Base.metadata）
+- 現行 models.py 全体を反映したベースライン migration autogenerate
+- `main.py` の lifespan を `DEV_AUTO_CREATE=true` の場合のみ `create_all` に限定
+- `postgres.py` に `async transaction()` コンテキストマネージャを追加
+
+**FIX-2 (billing+audit)**: credit_usage 台帳・audit_log・単価 API
+- `credit_usage` テーブル追加（initiated_by, balance_after 含む）
+- `audit_logs` テーブル追加 + `record_log()` 関数
+- `check_and_deduct` 成功時に credit_usage へ INSERT
+- `GET /billing/credit-costs` エンドポイント追加
+
+**FIX-3 (auth/deps)**: セッション照合・httpOnly cookie・signup トランザクション
+- `deps.py`: JWT 検証後に sessions テーブルを照合（status=active 確認）
+- login/refresh: refresh_token を httpOnly+Secure+SameSite=Lax cookie で Set-Cookie
+- signup: `transaction()` で User→Agency→AgencyMember→Session を1トランザクション化
+
+**FIX-4 (frontend)**: トークン保存方式・クレジット表示修正
+- `api.ts` / `auth-context.tsx`: refresh を localStorage から削除、access はメモリ保持、起動時 cookie で復元
+- `diagnoses/new/page.tsx`: ハードコード 15cr を `/billing/credit-costs` から取得に変更
+
+**FIX-5 (diagnosis)**: 部分成功課金 + raw_evidence 保持方針
+- 有効 LLM 応答 0件 → 課金なし、status=failed
+- 片側失敗 → 課金するが `degraded=true` フラグを残す
+- `retain_until`（created_at + 90日）カラム追加、worker tick での purge 準備
+
+**FIX-6 (optimization)**: 実装チェックリスト生成
+- `Optimization` に `checklist` JSONB カラム追加（alembic revision）
+- `_generate_artifacts()` でチェックリスト生成
+- `/download/{artifact}` の artifact に checklist 追加
+
+**FIX-7 (docs/policy)**: シム負債方針・ログ注記・UI 未実装の明示
+- `backend/CLAUDE.md` にシム使用方針追記
+- `session_log.md` 冒頭に v3/v4 注記
+- Phase 8 メモに UI 未実装の明示
+
+### 作業結果（FIX-1〜7 完了）
+
+**FIX-1 (shared/db)**:
+- `backend/alembic/` 一式を新規作成（`alembic init` → `env.py` に `target_metadata = Base.metadata` 設定）
+- `0001_baseline_v4_1_all_tables.py`: v4.1 全テーブルを定義したベースライン migration（users / agencies / agency_members / sessions / clients / keyword_sets / diagnoses / reports / invoices / api_credits / automation_schedules / automation_logs / optimizations / content_sources / content_articles / credit_usage / audit_logs の 17 テーブル）
+- `backend/app/main.py`: lifespan に `DEV_AUTO_CREATE=true` 環境変数ガードを追加（本番は `alembic upgrade head` 前提、`create_all` は開発用のみ）
+- `backend/app/shared/db/postgres.py`: `async transaction()` コンテキストマネージャを追加（複数テーブルへのアトミック書き込み用）
+
+**FIX-2 (billing+audit)**:
+- `backend/app/shared/utils/credits.py`: `check_and_deduct` 成功時に `credit_usage` テーブルへ INSERT（`member_id`, `initiated_by`, `amount`, `usage_type`, `resource_id`, `client_id`, `balance_after` を記録）
+- `backend/app/modules/billing/router.py`: `GET /billing/credit-costs` エンドポイントを追加（`plans.py` の `CREDIT_COSTS` をそのまま返す。フロントエンドのハードコード排除用）
+
+**FIX-3 (auth/deps)**:
+- `authentication/services.py`: signup を `transaction()` + SQLAlchemy ORM で完全アトミック化（User/Agency/AgencyMember/Session を1トランザクション）
+- `session_id` を DB の PK（id）と同一 UUID に統一（`doc_id` 廃止）
+- `refresh_token` をレスポンスボディから除去し httpOnly+Secure+SameSite=Lax Cookie に移行
+- `router.py`: `/signup` / `/login` → Cookie Set, `/refresh` → Cookie 読み取り, `/logout` → Cookie 削除
+- `deps.py`: `db_query('sessions', [('session_id', '==', ...)])` → `db_get('sessions', session_id)` に変更（直接 PK 引き）
+
+**FIX-4 (frontend)**:
+- `lib/api.ts`: access_token をモジュール変数（メモリ）に移行、`withCredentials: true`、401リトライは Cookie 経由
+- `lib/auth-context.tsx`: `setTokens(access_token, session_id)` に簡素化、起動時は `/auth/refresh` Cookie で bootstrap
+- `auth/login/page.tsx` / `auth/signup/page.tsx`: `finishLogin/Signup` の型から `refresh_token` 除去
+- `diagnoses/new/page.tsx`: ハードコード `{simple: 5, detailed: 15}` を `GET /billing/credit-costs` 動的取得に変更（`simple_diagnosis` / `detailed_diagnosis` キー対応）
+
+**FIX-5 (diagnosis)**:
+- `diagnosis/services.py`: 事後課金方式に変更（診断成功後に `check_and_deduct` 呼び出し、失敗時は課金なし）
+- 事前残量チェック（deductなし）を upfront で追加
+- `retain_until = created_at + 90日` を診断レコードに追加
+- `_run_detailed_diagnosis`: 全 LLM コール失敗時は `RuntimeError` 送出（課金なし）、片側失敗は `degraded=True` を返すよう変更
+- `worker/main.py`: `_purge_raw_evidence()` 追加（毎日 02:00 JST に `retain_until < CURRENT_DATE` の `raw_evidence` を NULL 化）
+
+**FIX-6 (optimization)**:
+- `optimization/schemas.py`: `OptimizationResponse` に `checklist: Optional[list]` 追加
+- `optimization/services.py`: `_build_checklist()` 関数追加（LLM不要の決定論的チェックリスト生成）、`_generate_artifacts()` の戻り値に `checklist` 追加
+- `optimization/router.py`: `_ARTIFACT_KEYS` と JSON ダウンロード分岐に `checklist` 追加
+
+**FIX-7 (docs/policy)**:
+
+> **v3/v4 セッションログ注記**: このファイルの Session 2026-06-19〜22（「リビルド開始」より前）は旧 v3 実装（Firebase Auth + Firestore + Cloud Run）のログです。「Session 2026-06-19 (リビルド開始)」以降が v4 実装（自前JWT + PostgreSQL + VPS Docker）のログです。5W1H の Where / How 欄は v3 時点の記述であり、現行 v4 では「VPS(116.80.96.175) + Docker Compose（api/web/db/nginx）+ PostgreSQL」が正です。
+
+> **Phase 8 UI 未実装メモ**: 以下のモジュールはバックエンド API は完成しているが、フロントエンド UI は未実装（Phase 8 スコープ）:
+> - `/optimizations` — STEP2 実装最適化（JSON-LD/AI要約/robots.txt/FAQ/WP preset/checklist ダウンロード）
+> - `/contents` — STEP3 コンテンツ生成（GEO5記事生成・編集ワークフロー）
+> - `/automation` — 自動診断スケジュール管理・ログ閲覧
+
+### 変更ファイル
+- backend/alembic/env.py（新規）
+- backend/alembic/versions/0001_baseline_v4_1_all_tables.py（新規）
+- backend/app/main.py（DEV_AUTO_CREATE ガード追加）
+- backend/app/shared/db/postgres.py（transaction() 追加）
+- backend/app/shared/utils/credits.py（credit_usage INSERT 追加）
+- backend/app/modules/billing/router.py（GET /billing/credit-costs 追加）
+- backend/app/core/authentication/schemas.py
+- backend/app/core/authentication/services.py
+- backend/app/core/authentication/router.py
+- backend/app/shared/api/deps.py
+- frontend/lib/api.ts
+- frontend/lib/auth-context.tsx
+- frontend/app/auth/login/page.tsx
+- frontend/app/auth/signup/page.tsx
+- frontend/app/dashboard/diagnoses/new/page.tsx
+- backend/app/modules/diagnosis/services.py
+- worker/main.py
+- backend/app/modules/optimization/schemas.py
+- backend/app/modules/optimization/services.py
+- backend/app/modules/optimization/router.py
+- docs/session_log.md（本エントリ追記）
+
+### 次のアクション
+- Phase 8: フロントエンド新UI実装（Optimization/Content/Automation 画面）
+- Phase 9: docker-compose 統合・本番切替・E2E テスト
+- Alembic migration の本番適用（`alembic upgrade head`）
+
+---
+
+## Session 2026-06-23（続）— automation バグ修正（FIX-8: pre-Phase8 品質対応）
+
+### 作業内容
+
+前セッションのコードレビューで発見した「例外は出ないが静かに誤動作する」タイプのバグを修正。
+設計判断（Q1〜Q3）をユーザーに確認してから実装。
+
+**事前確認（マイグレーション点検）**:
+- `diagnoses.source` 列 → migration line 132 に存在確認 ✅（問題なし）
+- `credit_usage.member_id` → migration line 267 に存在確認 ✅（`child_account_id` は存在しない → バグ確定）
+- `next_execution` 型 → `String(64)` 確認（PostgreSQL の `now()` との比較は型エラー → バグ確定）
+
+**Q1（SKIP LOCKED アトミック化）— 確認後実装**:
+- `_tick()` で SELECT と next_execution 前進 UPDATE を同一トランザクション内に移動
+- 行ごとに `_calc_next_execution()` を呼んで per-row UPDATE（全行同値の bulk UPDATE は不可）
+- `_execute_inner` の `_advance_next_execution()` 呼び出し全3箇所を削除、関数自体も削除
+- status='running' フラグ方式は却下（カラム追加不要、クラッシュ時の自然復帰を優先）
+
+**Q2（クレジット消費のアトミック化）— 確認後実装**:
+- `_consume_agency_credits` を read-modify-write から原子的 `UPDATE ... RETURNING` に置き換え
+- `monthly_used + :amount <= monthly_limit` 条件で楽観的更新、rowcount=0 → `None` を返す
+- 呼び出し側（step5）: `None` の場合 `credits_consumed=0` / `alert_level='warning'` / `error_details='insufficient_at_consume'` でログ保存（診断結果は保存済みのため取り消しなし）
+
+**Q3（automation 診断コスト）— 確認後実装**:
+- `plans.py` に `automation_monthly: 12`、`automation_weekly: 6` を追記（暫定値、運用後に実原価で確定）
+- `_execute_inner` の `diagnosis_cost = 15` ハードコードを `CREDIT_COSTS['automation_monthly' if is_monthly else 'automation_weekly']` に変更
+
+**バグ修正 A〜F（設計判断不要な修正）**:
+- **A** `m['id']` → `m['user_id']`: `_resolve_recipients` / `_resolve_admin_user_ids` の2箇所
+- **B** `child_account_id` → `member_id`: `_consume_agency_credits` の db_set 呼び出し（`hasattr` フィルタで無言ドロップされていた）
+- **C** regression 検知パス修正: `keyword_analysis['ai_results']` を廃止し `ai_analysis['gemini'][kw]['mention']` 構造を使用（`keyword_analysis` の実際の形状は `{'scores': {kw: score}}` で `ai_results` キーは存在しなかった）
+- **D** mention 比較修正: `get('mention', False)` → `get('mention', 'not_mentioned')`、bool 比較 → `in ('mentioned', 'partial')`
+- **E** `next_execution::timestamptz <= now()`: `String(64)` 列と `timestamptz` の型不一致を明示キャストで解消
+- **F** 例外握りつぶし解消: `except Exception: pass`（`_notify`）→ `logger.exception(e)` / 月次レポートの `except Exception as e` も同様
+
+**worker init_db 除去**:
+- `await init_db()` → `get_engine()`（create_all バイパスを解消、接続プールのみ eager 初期化）
+
+**session_log.md 補完**:
+- 前セッションエントリの「作業結果（FIX-3〜7 完了）」に FIX-1・FIX-2 が未記載だったことを発見
+- コードで実装済みを確認し、「作業結果（FIX-1〜7 完了）」に修正・追記
+
+### 変更ファイル
+- backend/app/shared/constants/plans.py（automation_monthly/weekly コスト追加）
+- backend/app/modules/automation/services.py（バグ修正 A〜F・Q1〜Q3 全適用）
+- worker/main.py（SKIP LOCKED アトミック化・timestamptz キャスト・init_db 除去）
+- docs/session_log.md（FIX-1〜2 補完・本エントリ追記）
+
+### 次のアクション
+- Phase 8: フロントエンド新UI実装（Optimization / Content / Automation 画面）
+- Phase 9: docker-compose 統合・本番切替・E2E テスト
+- Alembic migration の本番適用（`alembic upgrade head`）
+- automation_monthly / automation_weekly のクレジット単価を運用データで確定（現在は暫定値 12/6）
+
+### 技術的負債メモ
+- **[debt] AutomationSchedule.next_execution の型**: 現在 `String(64)`（ISO文字列）。worker の WHERE 句で `::timestamptz` キャストにより対症療法済み。根治は `Column(DateTime(timezone=True))` への変更 + Alembic revision が必要。インデックスが効かないため、スケジュール数増加時に tick の seq scan が重くなる。`created_at` / `last_execution` も同じ String 運用なので一括で移行を検討する。
+- **[TODO] audit_logs への record_log() 配線**: `audit_logs` テーブルはマイグレーション済みだが、書き込み関数の実装と呼び出しが未配線。最低限、以下のイベントで呼ぶ方針: クレジット消費 / 課金 Webhook / メンバー変更 / スケジュール CRUD。Phase 8 と並行で対応可（「黙って壊れる」類ではない）。
+
+---

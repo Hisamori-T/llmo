@@ -16,15 +16,15 @@ interface DashboardStats {
 }
 
 export default function DashboardHome() {
-  const { user, firebaseUser, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (authLoading) return;
-    if (!firebaseUser) { setLoading(false); return; }
+    if (!user) { setLoading(false); return; }
     apiClient.get('/users/dashboard').then((res) => setStats(res.data)).catch(() => {}).finally(() => setLoading(false));
-  }, [authLoading, firebaseUser]);
+  }, [authLoading, user]);
 
   if (loading) {
     return (
