@@ -1717,3 +1717,36 @@ VPS rebuild 完了
 7. **tech debt**: audit_logs record_log() 配線
 
 ---
+
+## Session 2026-06-24-11
+
+### 作業内容（予定）
+- PDF日本語文字化け（豆腐□）の修正（reportingモジュール）
+
+### 作業結果
+
+**調査（コード・VPS両方確認）**
+- `docker exec llmo-api-1 find / -name "*.ttf" | grep -i cjk` → 0件（日本語フォントなし）
+- `pdf_generator.py` の `_try_register_japanese_font()` は候補パスを7箇所チェックするが全滅
+  → `_FONT_NAME = 'Helvetica'`（fallback）のまま → 日本語グリフなし → 豆腐
+- コード自体の構造は正しい: 全 ParagraphStyle / TableStyle が `fontName=font`（動的変数）を使用
+
+**修正（Dockerfile のみ、1行追加）**
+- `python:3.11-slim` に `fonts-ipafont-gothic` を追加
+  → `/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf` がインストールされる
+  → `_try_register_japanese_font()` の第一候補パスと一致 → `_FONT_NAME = 'Japanese'` になる
+- コード変更ゼロ（pdf_generator.py は変更不要）
+
+VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipagp.ttf` 確認済み
+
+### 変更ファイル
+- `backend/Dockerfile`（fonts-ipafont-gothic 追加、1行）
+
+### 次のアクション
+1. PDF詳細レポートを再ダウンロードして日本語が正常表示されるか確認
+2. **進捗ゲージ設計**（BackgroundTask化 + status/progress更新 + フロントpolling）
+   - 設計→承認→実装の順で進める（新機能のため）
+3. OPENAI_API_KEY / TAVILY_API_KEY 設定済みで再診断 → degradedバナーが消えるか確認
+4. **tech debt**: サイドバークレジット表示ズレ（保留中）
+
+---
