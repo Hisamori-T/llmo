@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Sidebar } from '@/components/Sidebar';
+import { DashboardMain } from './DashboardMain';
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
@@ -9,11 +10,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto px-8 py-8">
-          {children}
-        </div>
-      </main>
+      <DashboardMain>{children}</DashboardMain>
     </div>
   );
 }
