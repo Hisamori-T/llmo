@@ -62,18 +62,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  nginx:
-    image: nginx:1.25-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./infra/nginx/llmo.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./infra/ssl:/etc/ssl/llmo:ro
-    depends_on:
-      - api
-      - web
-    restart: unless-stopped
+  # nginx は Docker compose では不使用。
+  # ホスト nginx (systemd) が /etc/nginx/sites-enabled/llmo で
+  # 127.0.0.1:8006(api) / 127.0.0.1:3001(web) へ直接 proxy する。
 
 volumes:
   pgdata:
