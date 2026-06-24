@@ -1541,3 +1541,107 @@ llmo-worker-1 Up（APScheduler）
 4. **tech debt引継ぎ**: `next_execution` migration / `audit_logs` 配線 / LINE user_id
 
 ---
+
+## Session 2026-06-24-7
+
+### 作業内容
+- 診断500エラーの根本原因特定・修正・VPSデプロイ
+- ページロード時403 race conditionの修正・VPSデプロイ
+
+### 作業結果
+
+**問題1: POST /api/diagnoses → 500**
+- VPS api ログを直接確認（SSH）
+- 根本原因: `retain_until = (now + timedelta(days=90)).date()` が `datetime.date` オブジェクトのままVARCHARカラムに渡っていた
+  - asyncpgが `expected str, got date` でDataError → 500
+- 修正: `.date()` → `.date().isoformat()` で文字列化
+- ファイル: `backend/app/modules/diagnosis/services.py`
+- VPS rebuild → 診断成功を確認 ✅（green parlour ベルベール 総合スコア43点）
+
+**問題2: GET /api/clients, /api/billing/credit-costs → 403（ページロード時）**
+- 原因: 全ダッシュボードページ（14ファイル）の `useEffect([], [])` が
+  AuthContext の refresh 完了前に発火 → アクセストークン未セットで 403
+- 修正: `DashboardMain.tsx`（client component）を新規作成し `layout.tsx` から使用
+  - `useAuth().loading` が true の間はスピナーを表示、false になったら `{children}` を描画
+  - これにより全ダッシュボードページで auth 完了待ちが一括実現
+- ファイル: `frontend/app/dashboard/DashboardMain.tsx`（新規）
+  `frontend/app/dashboard/layout.tsx`（`<main>` を `<DashboardMain>` に置き換え）
+- VPS rebuild済み
+
+### 変更ファイル
+- `backend/app/modules/diagnosis/services.py` — `retain_until.isoformat()`
+- `frontend/app/dashboard/DashboardMain.tsx`（新規）
+- `frontend/app/dashboard/layout.tsx`
+
+### 現在のVPS状態
+```
+llmo-api-1  Up（retain_until fix / RuntimeError→400 fix 適用済み）
+llmo-web-1  Up（DashboardMain auth guard 適用済み）
+llmo-db-1   healthy
+```
+
+### 次のアクション
+1. ブラウザをハードリロード → 診断新規ページで 403 が消えているか確認
+2. E2Eスモークテスト継続: 最適化・自動化スケジュール・コンテンツ各ページ
+3. **tech debt**: `next_execution` String → DateTime migration
+4. **tech debt**: `audit_logs` record_log() 配線
+5. **tech debt**: Pro/Enterprise クレジット数表示の統一（frontend 500/2000 vs PLAN_CONFIG 200/500）
+6. **tech debt**: LINE user_id 取得フロー
+
+---
+
+## Session 2026-06-24-8
+
+### 作業内容（予定）
+- GET /api/diagnoses → 500 の根本原因調査（推測実装禁止・ログ確認→スキーマ確認→修正）
+- VPS ログで Traceback 特定 → degraded レコードの DB 構造確認 → diagnosis スキーマ修正
+- 対象: diagnosis モジュールのみ（1変更=1モジュール）
+- 修正不要として記録: サイドバークレジット表示ズレ（別タスク）
+
+### 作業結果
+
+**問題: GET /api/diagnoses → 500 (ValidationError)**
+- VPS ログで Traceback 確認:
+  ```
+  pydantic_core._pydantic_core.ValidationError: 9 validation errors for DiagnosisResult
+  recommendations.0
+    Input should be a valid string [input_value={'action': '...', 'timeline': '1週間以内'}, input_type=dict]
+  ```
+- 根本原因: `DiagnosisResult.recommendations: list[str]` だが、詳細診断（detailed）の synthesis プロンプトは
+  `{action, priority, category, impact, timeline}` の dict を DB に保存する
+  → Pydantic が dict を str として validate しようとして ValidationError → 500
+- 修正内容（1モジュール: diagnosis のみ）:
+  1. `schemas.py`: `Recommendation` モデル追加、`DiagnosisResult.recommendations: list[Recommendation]` に変更
+  2. `router.py`: `_to_result()` で dict/str 両方を Recommendation に変換するロジック追加
+  3. `frontend/app/dashboard/diagnoses/[id]/page.tsx`:
+     - `Recommendation` interface 追加（action/priority/category/impact/timeline）
+     - `BackendDiagnosis.recommendations: Recommendation[]` に変更
+     - 描画を `{r}` → `{r.action}` + `{r.timeline}` に変更
+
+- VPS rebuild 結果: `llmo-api-1 Started`, `llmo-web-1 Started`（エラーなし）
+- api 起動ログ: `Application startup complete.`
+
+### 変更ファイル
+- `backend/app/modules/diagnosis/schemas.py` — Recommendation モデル追加
+- `backend/app/modules/diagnosis/router.py` — _to_result() Recommendation 変換
+- `frontend/app/dashboard/diagnoses/[id]/page.tsx` — Recommendation interface + 描画修正
+
+### 現在のVPS状態
+```
+llmo-api-1  Up（Recommendation fix / retain_until fix / RuntimeError→400 fix 適用済み）
+llmo-web-1  Up（Recommendation描画修正 / DashboardMain auth guard 適用済み）
+llmo-db-1   healthy
+```
+
+### 次のアクション
+1. ブラウザで診断一覧ページ（/dashboard/diagnoses）が正常表示されるか確認
+2. 診断詳細ページで改善推奨事項が「action」テキストで表示されるか確認
+3. E2Eスモークテスト継続: 最適化・自動化・コンテンツ各ページ
+4. **tech debt**: `next_execution` String → DateTime migration
+5. **tech debt**: `audit_logs` record_log() 配線
+6. **tech debt**: Pro/Enterprise クレジット数（frontend 500/2000 vs PLAN_CONFIG 200/500）
+7. **tech debt**: TAVILY_API_KEY 設定（詳細診断のWeb grounding）
+8. **tech debt**: LINE user_id 取得フロー
+9. サイドバークレジット表示ズレ（別タスク、保留中）
+
+---
