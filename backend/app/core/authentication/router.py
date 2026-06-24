@@ -35,7 +35,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         secure=settings.environment != 'development',
         samesite='lax',
         max_age=settings.refresh_token_ttl,
-        path='/auth/refresh',
+        path='/api/auth/refresh',
     )
 
 
@@ -107,4 +107,4 @@ async def reset_password(body: ResetPasswordRequest):
 @router.post('/logout', status_code=status.HTTP_204_NO_CONTENT)
 async def logout(body: LogoutRequest, response: Response, current_user: CurrentUser = Depends(get_current_user)):
     await _service.logout(current_user.user_id, body.session_id)
-    response.delete_cookie(key=_COOKIE_NAME, path='/auth/refresh')
+    response.delete_cookie(key=_COOKIE_NAME, path='/api/auth/refresh')
