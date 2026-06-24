@@ -46,7 +46,7 @@ async def run_diagnosis(
             diagnosis_type=body.type,
         )
         return _to_result(result)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 

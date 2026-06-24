@@ -1279,3 +1279,265 @@
   - ローカル dev で cookie が動かない場合は `environment=development` を `.env` に設定
 
 ---
+
+## Session 2026-06-24（続）— Phase 9 Step 3〜5: DB作成・alembic・全サービスビルド
+
+### 作業内容
+- Phase 9 Step 3: VPS git pull（v4-rebuild ブランチ）
+- Phase 9 Step 4: `llmo_v4` DB 作成 → `alembic upgrade head`
+- Phase 9 Step 5: `docker compose up -d --build`（全サービスビルド＋起動）
+- 途中発生した2点のビルドエラーを修正（npm ci / next standalone）
+
+### 実施内容と結果
+
+**docker-compose.yml 最終形**:
+- db サービスの `ports: "5432:5432"` を削除（Coolify postgres がホスト 127.0.0.1:5432 を占有しているため）
+- api/worker の `DATABASE_URL` を `llmo` → `llmo_v4` に変更
+- `worker` サービスを新規追加（backend コンテキスト、`python worker/main.py`）
+
+**backend/worker/main.py 追加**:
+- root の `worker/main.py` は backend ビルドコンテキスト外のため docker にコピーされない問題を発見
+- `backend/worker/main.py` を作成（`sys.path.insert(0, '..')` で `/app` を追加してインポート）
+- docker-compose の worker コマンドを `python worker/main.py` に修正
+- commit `552904b` → push 成功
+
+**Phase 9 Step 3 (VPS git pull)**:
+- `git pull origin v4-rebuild` → `b43294a..552904b` Fast-forward ✅
+
+**Phase 9 Step 4 (DB作成 + alembic)**:
+- `.env` が `/root/llmo/` に存在せず `docker compose exec` が失敗 → `backend/.env` へのシンボリックリンクで解決
+- `docker exec llmo-db-1 psql -U llmo -c 'CREATE DATABASE llmo_v4;'` → `CREATE DATABASE` ✅
+- `docker compose run --rm api alembic upgrade head` → `Running upgrade -> 0001, baseline v4.1 - all tables` ✅
+- `\dt` で 17テーブル + `alembic_version` = 18行 確認 ✅
+
+**Phase 9 Step 5 (全サービスビルド)**:
+- **エラー1**: `npm ci` が `package-lock.json` 不在のため失敗
+  - `frontend/Dockerfile` の `npm ci` → `npm install`（`--omit=dev`）に変更
+  - commit `f737145` → push → VPS 再ビルド
+- **エラー2**: `.next/standalone` が存在せず runner ステージが失敗
+  - `next.config.js` に `output: 'standalone'` を追加
+  - commit `311c7a4` → push → VPS 再ビルド
+- Next.js ビルド成功: 27ページ全生成、全ルート型チェック通過 ✅
+- api/web/worker イメージ全ビルド完了 ✅
+- **ブロック**: api コンテナ起動時に port 8006 already in use
+  - 旧 systemd `llmo-backend.service` が 8006 を占有中
+  - 旧 `llmo-frontend.service` も稼働中
+  - カットオーバー手順を確認中（Step 6 該当）
+
+### 変更ファイル
+- `docker-compose.yml` — db port削除・DATABASE_URL=llmo_v4・worker サービス追加
+- `backend/worker/main.py`（新規: backend コンテキスト内 worker、sys.path 修正）
+- `frontend/Dockerfile` — `npm ci` → `npm install`
+- `frontend/next.config.js` — `output: 'standalone'` 追加
+- VPS: `/root/llmo/.env` → `backend/.env` シンボリックリンク作成
+
+### 現在のVPS状態
+```
+llmo-db-1              running (healthy)  ← llmo_v4 DB・17テーブル作成済み
+llmo-api-1 / web / worker / nginx  未起動（port 8006 競合でブロック）
+llmo-backend.service   active (systemd, port 8006)
+llmo-frontend.service  active (systemd, port 3001)
+```
+
+### 次のアクション（Phase 9 Step 6: カットオーバー）
+- nginx 設定ファイル（`infra/nginx/llmo.conf`）と SSL 証明書パスを確認してから実施
+- 確認後: `systemctl stop llmo-backend llmo-frontend && systemctl disable llmo-backend llmo-frontend`
+- その後: `docker compose up -d` → nginx 経由で `https://llmo.fact-ally.com` 確認
+- 本番 `.env` に `environment=production` が設定されているか確認（Secure cookie）
+
+---
+
+## Session 2026-06-24-2
+
+### 作業内容（予定）
+- signup 500 / login 404 の根本原因調査・修正
+- alembic migration でスキーマを models.py と同期
+
+### 作業結果
+- **根本原因特定**: 0001 baseline migration が models.py より古く、7テーブルのカラムが欠落
+  - `agencies`: additional_child_accounts, max_child_accounts, credits_per_child, included_clients, additional_clients, max_clients（6カラム）
+  - `sessions`: session_id, browser_name/version/id, os/os_version, revoke_reason, last_activity（8カラム）
+  - `clients`: client_id, contact_phone, note, assigned_staff_ids, settings, created_by（6カラム）
+  - `keyword_sets`: keyword_set_id, generated_by, industry, location, target_url, competitor_data, market_analysis（7カラム）
+  - `reports`: share_url
+  - `invoices`: invoice_id, period_start, period_end, pdf_url
+  - `content_sources`: source_id
+  - `content_articles`: article_id, diagnosis_id, title
+- **修正内容**:
+  - `0002_agencies_add_missing_columns.py` 作成・適用（agencies 6カラム追加）
+  - `0003_schema_sync_all_tables.py` 作成・適用（残り全テーブルの欠落カラム追加）
+  - api コンテナ再ビルド（migration ファイルはコードに焼き付け）→ `alembic upgrade head` 実行
+- **検証結果**:
+  - `POST /auth/signup` → 201 ✅
+  - `POST /auth/login` → 200 ✅
+- **注意**: DB は `llmo_v4`（新規）のため、以前の旧DBのユーザーデータは存在しない。ユーザーは新規登録が必要。
+
+### 変更ファイル
+- `backend/alembic/versions/0002_agencies_add_missing_columns.py`（新規）
+- `backend/alembic/versions/0003_schema_sync_all_tables.py`（新規）
+
+### 現在のVPS状態
+```
+llmo-db-1     healthy（llmo_v4, alembic_version=0003）
+llmo-api-1    Up, 0.0.0.0:8006->8006/tcp ✅
+llmo-web-1    Up, 0.0.0.0:3001->3001/tcp
+llmo-worker-1 Up（APScheduler）
+https://llmo.fact-ally.com にて signup/login 正常動作確認済み
+```
+
+### 次のアクション
+- Phase 9 Step 7: Stripe/LINE webhook URL 確認（ドメイン変更なしなので問題ないはず）
+- Phase 9 Step 8: E2E スモークテスト（signup → 診断 → 最適化 → スケジュール → クレジット確認）
+- **tech debt**: `next_execution` String(64) → DateTime(timezone=True) migration
+- **tech debt**: `audit_logs` record_log() 配線
+- **tech debt**: automation credit costs 確認（monthly=12, weekly=6 暫定）
+- **tech debt**: LINE user_id 取得フロー
+
+---
+
+## Session 2026-06-24-3
+
+### 作業内容
+- コンソールエラー調査・修正（signup/login 復旧後のダッシュボード 403 問題）
+
+### 作業結果
+
+**問題1: `/terms` `/privacy` → 404**
+- 原因: signup ページの footer リンクに対応するページが未実装。Next.js が prefetch して 404
+- 修正: `frontend/app/terms/page.tsx` / `frontend/app/privacy/page.tsx` を新規作成
+- 結果: 両ページ HTTP 200 ✅
+
+**問題2: `/api/auth/refresh` → 401 → ダッシュボード全 API 403**
+- 症状: ログイン後にページ遷移するたびに全 API（`/api/clients`, `/api/diagnoses` 等）が 403 Forbidden
+- 根本原因: `backend/app/core/authentication/router.py` の `_set_refresh_cookie` で `path='/auth/refresh'` と設定していたが、ブラウザからは `https://llmo.fact-ally.com/api/auth/refresh` へリクエストするため cookie が送信されなかった
+  - Cookie の `path` はブラウザ側の URL パスで判定される（nginx が `/api/` を剥がす前の URL）
+  - `/auth/refresh` ≠ `/api/auth/refresh` のため cookie が常に未送信 → refresh 401 → `setAccessToken(null)` → 全 API 403
+- 修正: `path='/auth/refresh'` → `path='/api/auth/refresh'`（`_set_refresh_cookie` と `logout` の `delete_cookie` 両方）
+- 結果: api 再ビルド・再デプロイ完了 ✅
+
+**問題3: `/api/auth/refresh` → 401（ページロード時）は仕様**
+- 未ログイン状態でのページロード時に発生する 401 は正常動作
+- `.catch()` で吸収され `setAccessToken(null)` → `loading=false` の流れは意図通り
+- ブラウザ DevTools の赤表示は避けられないが機能的問題なし
+
+### 変更ファイル
+- `frontend/app/terms/page.tsx`（新規）
+- `frontend/app/privacy/page.tsx`（新規）
+- `backend/app/core/authentication/router.py` — cookie `path` を `/auth/refresh` → `/api/auth/refresh` に修正
+
+### 現在のVPS状態
+```
+llmo-db-1     healthy（llmo_v4, alembic_version=0003）
+llmo-api-1    Up, 0.0.0.0:8006->8006/tcp ✅（cookie path fix 適用済み）
+llmo-web-1    Up, 0.0.0.0:3001->3001/tcp ✅（/terms /privacy 追加済み）
+llmo-worker-1 Up（APScheduler）
+```
+
+### 次のアクション
+- ブラウザで既存の古い `refresh_token` cookie を削除 → 再ログインして 403 が解消されることを確認
+- Phase 9 Step 8: E2E スモークテスト（signup → 診断 → 最適化 → スケジュール → クレジット確認）
+- **tech debt**: `next_execution` String(64) → DateTime(timezone=True) migration
+- **tech debt**: `audit_logs` record_log() 配線
+- **tech debt**: automation credit costs 確認（monthly=12, weekly=6 暫定）
+- **tech debt**: LINE user_id 取得フロー
+
+---
+
+## Session 2026-06-24-4
+
+### 作業結果
+
+**問題1: ログアウトボタンが表示されない**
+- 原因: `Sidebar.tsx` のログアウトボタンが `{user && ...}` 内にあり、refresh 失敗で user=null の場合に非表示になっていた
+- 修正: `loading` が false になった時点で常にログアウトボタンを表示。クリック時に `logout()` → `/auth/login` へリダイレクト
+- ファイル: `frontend/components/core/sidebar/Sidebar.tsx`
+
+**問題2: pricing 旧価格（5k/15k/50k）が残っていた**
+- 原因: v3 時代の価格がコードに残存
+- 修正: Starter ¥15,000 / Pro ¥30,000 / Enterprise ¥80,000 に更新（年払いも 10% OFF で再計算）
+- ファイル: `frontend/app/pricing/page.tsx`, `frontend/app/dashboard/billing/page.tsx`
+
+**問題3: GET /api/optimizations, /automation/schedules, /contents/articles → 500**
+- 原因: `current_user: dict` と型注釈されていたが実体は `CurrentUser` オブジェクトのため `current_user['agency_id']` が `TypeError: 'CurrentUser' object is not subscriptable`
+- 修正: `current_user['agency_id']` → `current_user.agency_id`、`current_user['member_id']` → `current_user.member_id`（3ファイル・20箇所）
+- ファイル: `backend/app/modules/automation/router.py`, `optimization/router.py`, `content/router.py`
+
+### 現在のVPS状態
+```
+llmo-api-1  Up（CurrentUser fix 適用済み）
+llmo-web-1  Up（logout button 常時表示・正価格）
+```
+
+### 次のアクション
+- ブラウザのログアウトボタンでログアウト → 再ログイン（新 cookie path `/api/auth/refresh` を発行）
+- 各ページ（自動化・最適化・コンテンツ）が 500 ではなくデータ表示されることを確認
+- 他 router に同様の `current_user[...]` 書き方が残っていないか（grep では 0件確認済み）
+
+---
+
+## Session 2026-06-24-5
+
+### 作業結果
+
+**設定ページ → セキュリティタブのクラッシュ修正**
+- 原因1: `res.data.sessions` を参照していたが API は配列を直接返すため `undefined`
+- 原因2: API は snake_case（`session_id`, `browser_name`...）、フロントの `Session` 型は camelCase（`sessionId`, `browserName`...）で不一致
+- 修正: `useEffect` 内でレスポンスを `Session` 型にマッピング（snake→camel 変換）
+- ファイル: `frontend/app/dashboard/settings/page.tsx`
+
+**SSHキーをメモリに保存**
+- `C:\Users\user\Documents\private_key.pem` を memory に記録
+- 今後は VPS コマンド実行時にユーザーへの確認不要
+
+### 変更ファイル
+- `frontend/app/dashboard/settings/page.tsx`
+- `C:\Users\user\.claude\projects\g---------antigravity-LLMO-Score\memory\project_infra.md`（SSH キー追記）
+
+### 現在のVPS状態
+```
+llmo-db-1     healthy（llmo_v4, alembic_version=0003）
+llmo-api-1    Up ✅（CurrentUser fix / cookie path fix 適用済み）
+llmo-web-1    Up ✅（settings page fix / logout button / 正価格）
+llmo-worker-1 Up（APScheduler）
+```
+
+### 次のアクション
+1. **【要実施】** ログアウト → 再ログイン → 新 cookie path で refresh が通ることを確認
+2. **【要確認】** 設定 → セキュリティタブのセッション一覧表示確認
+3. **Phase 9 E2E スモークテスト**: クライアント登録 → 診断 → 最適化 → 自動化スケジュール → クレジット消費確認
+4. **Phase 9 Step 7**: Stripe/LINE webhook URL 確認
+5. **tech debt**: `next_execution` String(64) → DateTime migration
+6. **tech debt**: `audit_logs` record_log() 配線
+7. **tech debt**: automation クレジットコスト（monthly=12, weekly=6 暫定）
+8. **tech debt**: LINE user_id 取得フロー
+
+---
+
+## Session 2026-06-24-6
+
+### 作業内容
+- スレッド引継ぎ：E2E前チェック（メモリ・session_log確認）
+- ログアウト→再ログインで表示エラー解消済みを確認（ユーザー報告）
+- クレジット0/0問題の原因調査 → signup時に`monthly_credit_limit=100`を正しくセット済みと確認（pre-fix状態の副作用だった）
+- TAVILY_API_KEY空の影響調査 → `return []`フォールバック実装済み、診断クラッシュなし
+- 診断service全体フロー確認（client登録→診断→クレジット後引きのパス）
+- **バグ修正**: シンプル診断でGemini失敗時に`RuntimeError`が未catchで500になる問題 → `except (ValueError, RuntimeError)` に修正
+
+### 変更ファイル
+- `backend/app/modules/diagnosis/router.py` — `except ValueError` → `except (ValueError, RuntimeError)`（診断失敗を500ではなく400で返す）
+
+### 調査結果（E2E前チェック）
+- ✅ クレジット: signup後100cr正しくセット。再ログイン後100/100になる
+- ✅ TAVILY: 空でもgracefulフォールバック
+- ✅ CurrentUser dotアクセス: 全router確認済み
+- ⚠️ **GEMINI_API_KEY**: 形式が通常と異なる可能性。疎通テスト要（シンプル診断の依存先）
+- ⚠️ **Pro/Enterprise クレジット表示不整合**: frontend 500/2000cr、PLAN_CONFIG 200/500cr（Starter E2Eには非影響）
+- ⚠️ **年払い割引不整合**: frontend 10%OFF、PLAN_CONFIG 20%OFF
+
+### 次のアクション
+1. **【必須・最優先】** VPS上でGemini API疎通テスト（コンテナ内pythonコマンドで確認）
+2. Gemini OK確認後: E2Eスモークテスト開始（クライアント登録→診断→各ページ確認）
+3. **【要判断】** Pro/Enterpriseクレジット数 / 年払い割引率の正規値を決定してフロント or PLAN_CONFIGを修正
+4. **tech debt引継ぎ**: `next_execution` migration / `audit_logs` 配線 / LINE user_id
+
+---

@@ -345,7 +345,7 @@ class DiagnosisService:
 
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
-        retain_until = (now + timedelta(days=90)).date()
+        retain_until = (now + timedelta(days=90)).date().isoformat()
         diagnosis_id = str(uuid.uuid4())
 
         keywords = keywords or []
