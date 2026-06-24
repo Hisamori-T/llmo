@@ -1645,3 +1645,75 @@ llmo-db-1   healthy
 9. サイドバークレジット表示ズレ（別タスク、保留中）
 
 ---
+
+## Session 2026-06-24-9
+
+### 作業内容（予定）
+- DB実体で確認済みの事実: diagnoses の `ai_analysis` カラムが全レコードで null
+  - id=8a4bcad0 は scores={"overall":54,...} が入っているが ai_analysis=null
+- これが2つの問題の共通根本原因:
+  (A) GET /api/diagnoses が 500 → スキーマが ai_analysis を非nullで要求している可能性
+  (B) スコアが実態より低い → AI別認識データが空でフォールバック値になっている疑い
+- 調査手順（コード書く前）:
+  1. `services.py` の診断実行フローを読んで ai_analysis 生成・保存箇所を特定
+  2. VPS ログでGET /diagnoses の Traceback を取得（(A)の例外箇所特定）
+  3. ai_analysis が null になる原因を特定（保存漏れ／構造不一致／例外握りつぶし）
+- 修正は diagnosis モジュールのみ（1変更=1モジュール）
+
+### 作業結果
+- コード精読（services.py / schemas.py / router.py / postgres.py / models.py）で以下を確認：
+  - `DiagnosisResult` に `ai_analysis` フィールドなし → 500はai_analysisと無関係
+  - simple診断は ai_analysis を返さない設計 → id=8a4bcad0 の null は仕様通り
+  - 500の真因 = Recommendation 型不一致（前セッション修正済み）
+  - id=8a4bcad0 の `brand_recognition(45) ≠ ai_awareness(50)` → simple診断のレコード（detailed なら等値になる）
+  - detailed診断では ai_analysis は正常生成・保存される設計
+
+---
+
+## Session 2026-06-24-10
+
+### 作業内容（予定）
+- 詳細診断スコアが「AI認識ゼロ/GPT-4o全キーワードゼロ」と異常に低い問題の原因調査
+- 仮説: TAVILY_API_KEY が空 → Tavily return [] → LLMに情報ゼロで「知っているか」と質問 → mentioned=0
+
+### 作業結果
+
+**調査（コード・VPS両方確認）**
+- `docker exec llmo-api-1 printenv` で確認:
+  - `OPENAI_API_KEY`: **存在しない**（.env に記載なし）
+  - `TAVILY_API_KEY`: **存在しない**（.env に記載なし）
+  - `GEMINI_API_KEY`: 設定済み
+
+**スコア半減バグ（確定）**
+- GPT-4o 失敗時に `keyword_results[kw]['gpt4o'] = {'quality': 0}` を追加していた
+- `_calc_citation_scores` で `qualities = [gemini_Q, 0]`, `n_ai = 2` で割る
+- Gemini quality=2 のキーワードで `(2/3 + 0/3) / 2 * 100 = 33` → 本来 67 の半分
+- `ai_awareness` は `any()` で計算するため半減しない → `ai_awareness=62` vs `overall=低` の矛盾発生
+
+**修正（diagnosis モジュール 4ファイル）**
+1. `services.py`: GPT-4o 失敗時に `keyword_results` に追加しない（phantom zero 混入を防止）
+2. `services.py`: `degraded = failed_calls > 0 or not settings.tavily_api_key`
+3. `schemas.py`: `DiagnosisResult` に `degraded: bool = False` 追加
+4. `router.py`: `_to_result()` で `degraded` 渡す
+5. `frontend/diagnoses/[id]/page.tsx`: degraded 警告バナー表示
+
+VPS rebuild 完了
+
+### 変更ファイル
+- `backend/app/modules/diagnosis/services.py`
+- `backend/app/modules/diagnosis/schemas.py`
+- `backend/app/modules/diagnosis/router.py`
+- `frontend/app/dashboard/diagnoses/[id]/page.tsx`
+
+### 次のアクション（優先順）
+1. **詳細診断を再実行** → スコアが改善されているか確認（Gemini-only での実態スコア）
+2. **OPENAI_API_KEY を .env に追加** → GPT-4o 有効化で真のマルチLLM診断
+   - VPS: `/root/llmo/.env` に `OPENAI_API_KEY=sk-...` を追記 → `docker compose up -d api`
+3. **TAVILY_API_KEY を .env に追加** → Web grounding 有効化
+   - VPS: `/root/llmo/.env` に `TAVILY_API_KEY=tvly-...` を追記 → `docker compose up -d api`
+4. 両キー設定後に再診断 → degraded バナーが消え、スコアが実態を反映するか確認
+5. **tech debt**: サイドバークレジット表示ズレ（保留中）
+6. **tech debt**: next_execution String→DateTime migration
+7. **tech debt**: audit_logs record_log() 配線
+
+---
