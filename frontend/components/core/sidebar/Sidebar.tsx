@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { cn, getPlanLabel, getPlanColor } from '@/lib/utils';
 
@@ -37,7 +37,13 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const router = useRouter();
+  const { user, loading, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    router.push('/auth/login');
+  };
 
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col h-screen">
@@ -87,8 +93,8 @@ export function Sidebar() {
         )}
       </nav>
 
-      {user && (
-        <div className="mt-auto border-t border-slate-200 p-4">
+      <div className="mt-auto border-t border-slate-200 p-4">
+        {user && (
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-full bg-primary-50 text-primary-500 font-medium inline-flex items-center justify-center text-sm" role="img" aria-label={user.email}>
               {(user.displayName?.[0] ?? user.email[0]).toUpperCase()}
@@ -98,11 +104,13 @@ export function Sidebar() {
               <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', getPlanColor(user.plan))}>{getPlanLabel(user.plan)}</span>
             </div>
           </div>
-          <button onClick={logout} className="w-full inline-flex items-center justify-center h-8 px-3 text-[0.875rem] font-medium bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+        )}
+        {!loading && (
+          <button onClick={handleLogout} className="w-full inline-flex items-center justify-center h-8 px-3 text-[0.875rem] font-medium bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-gray-50 cursor-pointer">
             ログアウト
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   );
 }
