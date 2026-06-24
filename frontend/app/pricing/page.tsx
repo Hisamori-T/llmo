@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 const plans = [
   {
     name: 'Starter',
-    price: 5000,
-    yearlyPrice: 54000,
+    price: 15000,
+    yearlyPrice: 162000,
     credits: 100,
     accounts: 1,
     features: ['月100クレジット', '1アカウント', 'AI認知度診断', '簡易レポート', 'メールサポート'],
@@ -19,8 +19,8 @@ const plans = [
   },
   {
     name: 'Pro',
-    price: 15000,
-    yearlyPrice: 162000,
+    price: 30000,
+    yearlyPrice: 324000,
     credits: 500,
     accounts: 3,
     features: ['月500クレジット', '3アカウントまで', 'AI認知度診断', '詳細PDFレポート月2回', '優先サポート', 'チーム管理'],
@@ -29,8 +29,8 @@ const plans = [
   },
   {
     name: 'Enterprise',
-    price: 50000,
-    yearlyPrice: 540000,
+    price: 80000,
+    yearlyPrice: 864000,
     credits: 2000,
     accounts: 10,
     features: ['月2,000クレジット', '10アカウントまで', 'AI認知度診断', '詳細PDFレポート月4回', '専任サポート', 'チーム管理', 'API連携'],

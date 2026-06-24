@@ -26,9 +26,9 @@ interface BackendBillingInfo {
 }
 
 const PLANS = [
-  { id: 'starter', name: 'Starter', monthlyPrice: 5000, yearlyPrice: 54000, clients: 10, credits: 100 },
-  { id: 'pro', name: 'Pro', monthlyPrice: 15000, yearlyPrice: 162000, clients: 30, credits: 500 },
-  { id: 'enterprise', name: 'Enterprise', monthlyPrice: 50000, yearlyPrice: 540000, clients: 100, credits: 2000 },
+  { id: 'starter', name: 'Starter', monthlyPrice: 15000, yearlyPrice: 162000, clients: 10, credits: 100 },
+  { id: 'pro', name: 'Pro', monthlyPrice: 30000, yearlyPrice: 324000, clients: 30, credits: 500 },
+  { id: 'enterprise', name: 'Enterprise', monthlyPrice: 80000, yearlyPrice: 864000, clients: 100, credits: 2000 },
 ];
 
 const CREDIT_PACKS = [
