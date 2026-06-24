@@ -236,13 +236,12 @@ async def _run_detailed_diagnosis(
                     'context': parsed.get('context', ''),
                     'raw': resp.raw[:500],
                 }
+                raw_evidence[kw][model_name] = resp.raw[:1000]
             else:
                 failed_calls += 1
-                keyword_results[kw][model_name] = {
-                    'mention': 'not_mentioned', 'quality': 0,
-                    'context': f'error: {resp.error}', 'raw': '',
-                }
-            raw_evidence[kw][model_name] = resp.raw[:1000]
+                # Exclude from keyword_results: "API key missing" ≠ "AI gave quality=0".
+                # Including it would halve all scores by adding a phantom zero to n_ai.
+                raw_evidence[kw][model_name] = f'error: {resp.error}'
 
     # All LLM calls failed → total failure, caller should not charge
     if total_calls > 0 and failed_calls == total_calls:
@@ -288,7 +287,8 @@ async def _run_detailed_diagnosis(
     synthesis_resp = await ask_single(synthesis_prompt, model='gemini')
     synthesis = _extract_json(synthesis_resp.text) if synthesis_resp.ok else {}
 
-    degraded = failed_calls > 0
+    # Tavily missing = web grounding unavailable = quality degraded even if LLMs respond
+    degraded = failed_calls > 0 or not settings.tavily_api_key
     return {
         'scores': scores,
         'ai_analysis': {

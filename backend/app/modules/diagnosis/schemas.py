@@ -46,3 +46,4 @@ class DiagnosisResult(BaseModel):
     credits_used: int
     created_at: str
     completed_at: Optional[str] = None
+    degraded: bool = False

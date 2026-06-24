@@ -45,6 +45,7 @@ interface BackendDiagnosis {
   credits_used: number;
   created_at: string;
   completed_at: string | null;
+  degraded: boolean;
 }
 
 interface Client {
@@ -146,6 +147,19 @@ export default function DiagnosisDetailPage() {
         </div>
       ) : diagnosis.status === 'completed' && (
         <>
+          {/* Degraded warning */}
+          {diagnosis.degraded && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+              <span className="text-amber-500 text-lg flex-shrink-0 mt-0.5">⚠</span>
+              <div>
+                <p className="text-sm font-medium text-amber-800">診断品質が低下しています</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  一部のAIモデルまたはWeb検索が利用できない状態で診断が実行されました。スコアは参考値としてご利用ください。管理者にお問い合わせください。
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Scores */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {scoreItems.map((s) => {

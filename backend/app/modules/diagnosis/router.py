@@ -29,6 +29,7 @@ def _to_result(d: dict) -> DiagnosisResult:
         credits_used=d.get('credits_used', 5),
         created_at=d.get('created_at', ''),
         completed_at=d.get('completed_at'),
+        degraded=bool(d.get('degraded', False)),
     )
 
 
