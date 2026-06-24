@@ -22,7 +22,21 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (tab === 'security') {
-      apiClient.get('/users/sessions').then((res) => setSessions(res.data.sessions)).catch(() => {});
+      apiClient.get('/users/sessions').then((res) => {
+        const raw: Array<Record<string, unknown>> = Array.isArray(res.data) ? res.data : (res.data?.sessions ?? []);
+        setSessions(raw.map((s) => ({
+          sessionId: s.session_id as string,
+          browserName: (s.browser_name as string) || 'Unknown',
+          browserVersion: (s.browser_version as string) || '',
+          os: (s.os as string) || 'Unknown',
+          osVersion: (s.os_version as string) || '',
+          ipAddress: (s.ip_address as string) || '',
+          lastActivity: (s.last_activity as string) || '',
+          createdAt: (s.created_at as string) || '',
+          status: 'active' as const,
+          isCurrent: s.is_current as boolean,
+        })));
+      }).catch(() => {});
     }
     if (tab === 'notifications') {
       apiClient.get('/agency').then((res) => {
