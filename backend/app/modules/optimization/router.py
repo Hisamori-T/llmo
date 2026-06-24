@@ -18,13 +18,13 @@ _ARTIFACT_KEYS = {'json_ld', 'ai_summary', 'robots_txt', 'faq_structure', 'wp_pr
 @router.post('', response_model=OptimizationResponse, status_code=201)
 async def create_optimization(
     body: CreateOptimizationRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     try:
         doc = await _svc.create(
             diagnosis_id=body.diagnosis_id,
-            agency_id=current_user['agency_id'],
-            member_id=current_user['member_id'],
+            agency_id=current_user.agency_id,
+            member_id=current_user.member_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -34,10 +34,10 @@ async def create_optimization(
 @router.get('', response_model=list[OptimizationResponse])
 async def list_optimizations(
     client_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     return await _svc.list_optimizations(
-        agency_id=current_user['agency_id'],
+        agency_id=current_user.agency_id,
         client_id=client_id,
     )
 
@@ -45,9 +45,9 @@ async def list_optimizations(
 @router.get('/{optimization_id}', response_model=OptimizationResponse)
 async def get_optimization(
     optimization_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
-    doc = await _svc.get(optimization_id, current_user['agency_id'])
+    doc = await _svc.get(optimization_id, current_user.agency_id)
     if not doc:
         raise HTTPException(404, 'Optimization not found')
     return doc
@@ -57,12 +57,12 @@ async def get_optimization(
 async def download_artifact(
     optimization_id: str,
     artifact: str,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     if artifact not in _ARTIFACT_KEYS:
         raise HTTPException(400, f'artifact must be one of: {", ".join(_ARTIFACT_KEYS)}')
 
-    doc = await _svc.get(optimization_id, current_user['agency_id'])
+    doc = await _svc.get(optimization_id, current_user.agency_id)
     if not doc:
         raise HTTPException(404, 'Optimization not found')
     if doc.get('status') != 'completed':
