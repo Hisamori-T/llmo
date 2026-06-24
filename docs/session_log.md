@@ -1106,3 +1106,176 @@
 - **[TODO] audit_logs への record_log() 配線**: `audit_logs` テーブルはマイグレーション済みだが、書き込み関数の実装と呼び出しが未配線。最低限、以下のイベントで呼ぶ方針: クレジット消費 / 課金 Webhook / メンバー変更 / スケジュール CRUD。Phase 8 と並行で対応可（「黙って壊れる」類ではない）。
 
 ---
+
+## Session 2026-06-23（続々）— git 整備・VPS 実DB確認・PAT セキュリティ対応
+
+### 作業内容
+
+**VPS 実DB確認**:
+- SSH `root@116.80.96.175` で接続確認（秘密鍵: `C:\Users\user\Documents\private_key.pem`）
+- `docker ps` で稼働中コンテナを確認: `cmv3-api/web/worker/nginx`, `postgres`, `coolify-*`
+- `cmv3-api` 内の alembic history は別アプリ（建設管理系 v3）のものと判明
+- `postgres` コンテナ内に `llmo_db` データベースを発見 → `\dt` で確認したところ v3 スキーマ（`organizations/subscriptions` 等）
+- **結論**: v4 は未デプロイ（Phase 9 前の想定どおり）。列の実在確認は Phase 9 Step 4-3 で実施予定
+
+**git 整備**:
+- `git status` 確認 → ケースB: `v4-rebuild` ブランチが存在、リモート接続済み、FIX-1〜8 が全て未コミット
+- `.gitignore` に `.mypy_cache/` を追加
+- `git add --dry-run -A` で秘密情報（.env/adminsdk/pem）が含まれないことを確認
+- `git ls-files | grep` で既存追跡に秘密情報が無いことを確認（`*.example` のみ）
+- `git commit` — 69ファイル、6344行追加（FIX-1〜8 全込み）
+- `git push origin v4-rebuild` — 新規ブランチとして push 成功
+
+**PAT セキュリティ対応**:
+- `git remote -v` 出力に GitHub PAT がリモートURL（`https://<token>@github.com/...`）の形で露出していたことを確認
+- `git remote set-url origin https://github.com/Hisamori-T/llmo.git` でトークンをURLから除去
+- `git config --global credential.helper manager`（Windows 資格情報マネージャー）を設定
+- ユーザーに GitHub 上での旧トークンの revoke と新トークン発行を指示
+
+### 変更ファイル
+- .gitignore（.mypy_cache/ 追加）
+- docs/session_log.md（本エントリ追記）
+- git commit: `e71abe8` (v4-rebuild, 69 files)
+
+### 次のアクション
+- **[ユーザー対応 最優先]** GitHub で漏洩 PAT を revoke → 新トークン発行 → 次回 push で認証確認
+- Phase 8: フロントエンド新UI実装（Optimization / Content / Automation 画面）
+- Phase 9: docker-compose 統合・本番切替・E2E テスト（手順書: `docs/redesign/LLMO-Score-Phase9-deploy.md`）
+
+---
+
+## Session 2026-06-24 — Phase 8: フロントエンド新UI実装（Optimization / Automation / Contents 画面）
+
+### 作業内容
+- Phase 7 で実装済みのバックエンド API に対応するフロントエンド UI を3画面実装
+- デザイン SSOT（melta-ui-main）のトークンに準拠
+- エンドポイント仕様は各 router.py / schemas.py を直接参照
+
+### 実装内容（Sidebar + 3画面 10ファイル）
+
+**Sidebar.tsx 更新**:
+- 診断の直下に3つのナビゲーションアイテムを追加:
+  - 実装最適化 → `/dashboard/optimizations`（⚡アイコン）
+  - 自動化 → `/dashboard/automation`（時計アイコン）
+  - コンテンツ → `/dashboard/contents`（ドキュメントアイコン）
+
+**Optimization（実装最適化）画面**:
+- `page.tsx` — 一覧テーブル（status/credits_used/created_at/completed_at）、filter chips (all/completed/running/failed)
+- `new/page.tsx` — 完了済み診断の選択テーブル → POST /optimizations → 詳細ページへリダイレクト
+- `[id]/page.tsx` — status バッジ・メタ情報 dl/dd、生成中はスピナー＋5秒ポーリング、完了時は6種の成果物カード（JSON-LD / FAQスキーマ / WP Preset / チェックリスト / AI概要文 / robots.txt）＋個別ダウンロードボタン
+
+**Automation（自動化）画面**:
+- `page.tsx` — タブ構成（スケジュール一覧 / 実行ログ）。スケジュールは有効/停止の toggle（PATCH /automation/schedules/{id}）実装、ログは alert_level バッジ（ok=緑 / warning=黄 / critical=赤）
+- `new/page.tsx` — クライアント選択・月次/週次 toggle・実行日（月次1〜28日入力 / 週次プルダウン）・時刻・チャネル checkbox（email/LINE）・タスク checkbox（診断/レポート）、バリデーション付き
+
+**Contents（コンテンツ）画面**:
+- `page.tsx` — タブ構成（記事一覧 / 一次情報ソース一覧）。ソースはインライン削除（DELETE /content/sources/{id}）
+- `sources/new/page.tsx` — 種別（interview/doc/url）カード選択・タイトル入力・本文 textarea・URL（url 種別のみ表示）
+- `articles/new/page.tsx` — クライアント選択 → 同クライアントのソース一覧をチェックボックス選択（client_id 変更時に動的リフレッシュ）→ キーワード入力・診断ID任意入力 → POST /content/articles → 詳細へリダイレクト
+- `articles/[id]/page.tsx` — GEO5原則チェック（5項目 ✓/✗ バッジ）・生成中は5秒ポーリング・本文 Markdown テキストエリア編集・タイトル/ステータス更新（PATCH /content/articles/{id}）
+
+### 変更ファイル
+- `frontend/components/core/sidebar/Sidebar.tsx`（ナビ3項目追加）
+- `frontend/app/dashboard/optimizations/page.tsx`（新規）
+- `frontend/app/dashboard/optimizations/new/page.tsx`（新規）
+- `frontend/app/dashboard/optimizations/[id]/page.tsx`（新規）
+- `frontend/app/dashboard/automation/page.tsx`（新規）
+- `frontend/app/dashboard/automation/new/page.tsx`（新規）
+- `frontend/app/dashboard/contents/page.tsx`（新規）
+- `frontend/app/dashboard/contents/sources/new/page.tsx`（新規）
+- `frontend/app/dashboard/contents/articles/new/page.tsx`（新規）
+- `frontend/app/dashboard/contents/articles/[id]/page.tsx`（新規）
+
+### 次のアクション
+- **Phase 9**: docker-compose 統合・本番切替・E2E テスト（手順書: `docs/redesign/LLMO-Score-Phase9-deploy.md`）
+  1. `llmo_v4` DB 作成（`postgres` コンテナ内）
+  2. `alembic upgrade head`（17テーブル baseline）
+  3. 全サービス起動（api/web/worker/nginx）
+  4. nginx 向き先切替 + SSL
+  5. E2E スモークテスト（手順書 Section 8）
+- **git push**: `v4-rebuild` ブランチに Phase 8 分をコミット（PAT が必要。`repo` スコープで発行）
+- **tech debt**（Phase 9 後）:
+  - `next_execution String(64)` → `DateTime(timezone=True)` migration
+  - `audit_logs record_log()` 配線
+  - automation クレジット単価確定（暫定: monthly=12 / weekly=6）
+
+---
+
+## Session 2026-06-24（続々）— Phase 8 接合部4点追加修正
+
+### 作業内容
+前回修正で生まれた接合部（キー不一致・alert_level 誤表示・シークレット露出）を修正。
+
+### 修正内容
+
+**#1 notification_channels キー不一致（最重要・無音で壊れるタイプ）**:
+- `notification_channels` の期待構造を確認: `{ slack: {webhook_url}, line: {user_ids: []} }`
+- スキーマを `SlackChannelConfig` / `LineChannelConfig` のネスト構造に変更
+- 設定画面の LINE フィールドを `line_access_token`（誤）→ `user_ids`（LINE ユーザーID カンマ区切り）に修正
+- LINE アクセストークンはサーバー設定（`config.py`）で管理するため agency 設定には不要
+
+**#2 `none` alert_level 誤表示（失敗が緑「正常」に見える問題）**:
+- `tasks_failed` が非空または `error_details` がある場合は、`alert_level='none'` でも赤「失敗」バッジを表示
+
+**#3 webhook URL のシークレット露出**:
+- GET `/agency` の `notification_channels` で Slack webhook URL をマスキング（`••••` + 末尾4文字）して返す
+
+**#4 CORS 最終確認**（変更なし・Phase 9 注意事項として記録）:
+- `allow_credentials=True` ✅ 具体 origin リスト ✅ `allow_methods=['*']` ✅
+- 本番 `.env` に `environment=production` を明記すること（`secure=True` が有効になる）
+
+### 変更ファイル
+- `backend/app/modules/agency/schemas.py` — `SlackChannelConfig` / `LineChannelConfig` に変更
+- `backend/app/modules/agency/router.py` — `_mask()` + `_parse_notification_channels()` ヘルパー追加、マスキング適用
+- `frontend/app/dashboard/settings/page.tsx` — LINE フィールドを user_ids 入力に修正、保存構造をネスト形式に修正
+- `frontend/app/dashboard/automation/page.tsx` — `none` + tasks_failed/error_details 共存時は赤「失敗」バッジ
+
+### LINE 実装の整合確認（追記）
+- `send_line_message` は `settings.line_channel_access_token`（env）を使用 ✅
+- `get_channel_config(agency_id, 'line')['user_ids']` をループして1件ずつ push ✅
+- `POST /v2/bot/message/push` 正式 Messaging API（LINE Notify 非使用）✅
+- **[tech debt]** LINE user_id の取得導線未整備。友だち追加 → webhook で user_id 取得が必要。MVP は email/Slack 優先、LINE は運用フロー確立後に有効化推奨。
+
+### 次のアクション（Phase 9 前の最終状態）
+- git push（`repo` スコープ PAT で `v4-rebuild` ブランチ）
+- Phase 9 Step 4: `CREATE DATABASE llmo_v4` → `alembic upgrade head`
+- 本番 `.env` 必須設定: `environment=production`（Secure cookie 有効化）
+- E2E は nginx 同一ドメイン（llmo.fact-ally.com）構成で実施
+
+---
+
+## Session 2026-06-24（続）— Phase 8 E2E 前チェック・5点修正
+
+### 作業内容
+ユーザー指摘の5点（endpoint prefix / Slack欠落 / 実行日バリデーション / alert_level / cookie Secure）をコードで突き合わせ確認し、問題のある箇所を修正。
+
+### 確認結果
+
+| # | 指摘 | 結果 | 対応 |
+|---|---|---|---|
+| 1 | `/content` vs `/contents` prefix | **バグ確定** | 8箇所を `/contents` に修正 |
+| 2 | Slack 欠落・通知設定導線なし | **バグ確定** | フォーム追加 + 設定ページにタブ追加 |
+| 3 | 実行日 max=28 バリデーション | 問題なし | フロント `max={28}` 設定済み、サーバー側も 1〜28 検証あり |
+| 4 | `none` alert_level が緑にならない | **バグ確定** | `none` を緑/「正常」として追加 |
+| 5 | `Secure` cookie ローカル dev で動かない | **問題確定** | `environment != 'development'` 条件分岐に変更 |
+
+### 変更ファイル
+- `frontend/app/dashboard/contents/page.tsx` — `/content` → `/contents`（3箇所）
+- `frontend/app/dashboard/contents/sources/new/page.tsx` — 同上（1箇所）
+- `frontend/app/dashboard/contents/articles/new/page.tsx` — 同上（2箇所）
+- `frontend/app/dashboard/contents/articles/[id]/page.tsx` — 同上（2箇所）
+- `frontend/app/dashboard/automation/page.tsx` — `none` を緑バッジ・「正常」ラベルに追加
+- `frontend/app/dashboard/automation/new/page.tsx` — Slack チェックボックス追加
+- `frontend/app/dashboard/settings/page.tsx` — 「通知チャネル」タブ追加（Slack webhook URL / LINE アクセストークン入力）
+- `backend/app/modules/agency/schemas.py` — `NotificationChannels` モデル追加、`AgencyInfo` と `UpdateAgencyRequest` に追加
+- `backend/app/modules/agency/router.py` — GET に `notification_channels` マッピング追加、PATCH に `settings.notification_channels` 永続化追加
+- `backend/app/core/authentication/router.py` — `secure=True` → `secure=settings.environment != 'development'`
+
+### 次のアクション
+- **git push**: `v4-rebuild` ブランチに Phase 8 + 修正分をコミット（PAT `repo` スコープ必要）
+- **Phase 9**: `docs/redesign/LLMO-Score-Phase9-deploy.md` の手順で進める
+  - `.env` に `environment=production` を明記（development のままだと Secure cookie が外れる）
+  - E2E は nginx 同一ドメイン構成（llmo.fact-ally.com）で実施
+  - ローカル dev で cookie が動かない場合は `environment=development` を `.env` に設定
+
+---

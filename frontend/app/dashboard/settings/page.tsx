@@ -7,7 +7,7 @@ import { formatRelativeTime } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import type { Session } from '@/lib/types';
 
-type Tab = 'profile' | 'security' | 'team';
+type Tab = 'profile' | 'security' | 'team' | 'notifications';
 
 export default function SettingsPage() {
   const { user, refreshUser } = useAuth();
@@ -16,10 +16,20 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [saving, setSaving] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
+  const [slackWebhook, setSlackWebhook] = useState('');
+  const [lineUserIds, setLineUserIds] = useState('');
+  const [savingNotif, setSavingNotif] = useState(false);
 
   useEffect(() => {
     if (tab === 'security') {
       apiClient.get('/users/sessions').then((res) => setSessions(res.data.sessions)).catch(() => {});
+    }
+    if (tab === 'notifications') {
+      apiClient.get('/agency').then((res) => {
+        const ch = res.data?.notification_channels ?? {};
+        setSlackWebhook(ch.slack?.webhook_url ?? '');
+        setLineUserIds((ch.line?.user_ids ?? []).join(', '));
+      }).catch(() => {});
     }
   }, [tab]);
 
@@ -58,10 +68,34 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveNotifications = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingNotif(true);
+    try {
+      await apiClient.patch('/agency', {
+        notification_channels: {
+          slack: { webhook_url: slackWebhook.trim() },
+          line: {
+            user_ids: lineUserIds
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
+        },
+      });
+      toast.success('通知チャネルを保存しました');
+    } catch {
+      toast.error('保存に失敗しました');
+    } finally {
+      setSavingNotif(false);
+    }
+  };
+
   const tabs: { key: Tab; label: string }[] = [
     { key: 'profile', label: 'プロフィール' },
     { key: 'security', label: 'セキュリティ' },
     { key: 'team', label: 'チーム管理' },
+    { key: 'notifications', label: '通知チャネル' },
   ];
 
   return (
@@ -131,6 +165,51 @@ export default function SettingsPage() {
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* Notifications */}
+      {tab === 'notifications' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900 mb-1">通知チャネル設定</h2>
+          <p className="text-sm text-body mb-5">自動化アラートの送信先を設定します。未入力のチャネルは使用されません。</p>
+          <form onSubmit={handleSaveNotifications} className="space-y-5 max-w-lg">
+            <div className="space-y-1.5">
+              <label htmlFor="slack-webhook" className="block text-sm font-medium text-slate-700">
+                Slack Incoming Webhook URL
+              </label>
+              <input
+                id="slack-webhook"
+                type="url"
+                value={slackWebhook}
+                onChange={(e) => setSlackWebhook(e.target.value)}
+                placeholder="https://hooks.slack.com/services/..."
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <p className="text-xs text-body">Slack ワークスペースの Incoming Webhook を設定してください</p>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="line-user-ids" className="block text-sm font-medium text-slate-700">
+                LINE 通知先ユーザーID
+              </label>
+              <input
+                id="line-user-ids"
+                type="text"
+                value={lineUserIds}
+                onChange={(e) => setLineUserIds(e.target.value)}
+                placeholder="Uxxxxxxxx, Uxxxxxxxx（カンマ区切りで複数可）"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <p className="text-xs text-body">LINE Developers の Webhook で取得できる userId（U から始まる文字列）をカンマ区切りで入力</p>
+            </div>
+            <button
+              type="submit"
+              disabled={savingNotif}
+              className="inline-flex items-center justify-center h-10 px-4 text-[1rem] font-medium bg-primary-500 text-white rounded-lg hover:bg-primary-700 cursor-pointer disabled:opacity-50"
+            >
+              {savingNotif ? '保存中...' : '変更を保存'}
+            </button>
+          </form>
         </div>
       )}
 

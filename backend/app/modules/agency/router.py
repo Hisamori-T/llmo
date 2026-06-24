@@ -3,12 +3,28 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.shared.api.deps import CurrentUser, get_current_user, require_role
 from .schemas import (
     AgencyInfo, AgencyStats, Branding, InviteMemberRequest,
-    MemberInfo, UpdateAgencyRequest, UpdateMemberRequest,
+    LineChannelConfig, MemberInfo, NotificationChannels,
+    SlackChannelConfig, UpdateAgencyRequest, UpdateMemberRequest,
 )
 from .services import AgencyService
 
 router = APIRouter(tags=['agency'])
 _svc = AgencyService()
+
+
+def _mask(value: str) -> str:
+    if not value:
+        return ''
+    return '••••' + value[-4:] if len(value) > 4 else '••••'
+
+
+def _parse_notification_channels(raw: dict) -> NotificationChannels:
+    slack_raw = raw.get('slack') or {}
+    line_raw = raw.get('line') or {}
+    return NotificationChannels(
+        slack=SlackChannelConfig(webhook_url=_mask(slack_raw.get('webhook_url', ''))),
+        line=LineChannelConfig(user_ids=line_raw.get('user_ids', [])),
+    )
 
 
 @router.get('', response_model=AgencyInfo)
@@ -30,6 +46,9 @@ async def get_agency(current_user: CurrentUser = Depends(get_current_user)):
         included_clients=agency.get('included_clients', 10),
         max_clients=agency.get('max_clients', 30),
         branding=Branding(**branding) if isinstance(branding, dict) else Branding(),
+        notification_channels=_parse_notification_channels(
+            (agency.get('settings') or {}).get('notification_channels') or {}
+        ),
         created_at=agency.get('created_at', ''),
     )
 
@@ -44,6 +63,11 @@ async def update_agency(
         updates['name'] = body.name
     if body.branding is not None:
         updates['branding'] = body.branding.model_dump()
+    if body.notification_channels is not None:
+        agency = await _svc.get_agency(current_user.agency_id)
+        existing_settings = agency.get('settings') or {}
+        existing_settings['notification_channels'] = body.notification_channels.model_dump()
+        updates['settings'] = existing_settings
 
     if not updates:
         return await get_agency(current_user)

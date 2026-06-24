@@ -8,6 +8,19 @@ class Branding(BaseModel):
     contact_email: str = ''
 
 
+class SlackChannelConfig(BaseModel):
+    webhook_url: str = ''
+
+
+class LineChannelConfig(BaseModel):
+    user_ids: list[str] = []
+
+
+class NotificationChannels(BaseModel):
+    slack: SlackChannelConfig = SlackChannelConfig()
+    line: LineChannelConfig = LineChannelConfig()
+
+
 class AgencyInfo(BaseModel):
     agency_id: str
     name: str
@@ -21,12 +34,14 @@ class AgencyInfo(BaseModel):
     included_clients: int
     max_clients: int
     branding: Branding
+    notification_channels: NotificationChannels
     created_at: str
 
 
 class UpdateAgencyRequest(BaseModel):
     name: Optional[str] = None
     branding: Optional[Branding] = None
+    notification_channels: Optional[NotificationChannels] = None
 
 
 class InviteMemberRequest(BaseModel):
