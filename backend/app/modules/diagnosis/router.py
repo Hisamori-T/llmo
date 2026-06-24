@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.shared.api.deps import CurrentUser, get_current_user, require_role
-from .schemas import DiagnosisResult, DiagnosisScores, Finding, RunDiagnosisRequest
+from .schemas import DiagnosisResult, DiagnosisScores, Finding, Recommendation, RunDiagnosisRequest
 from .services import DiagnosisService
 
 router = APIRouter(tags=['diagnoses'])
@@ -22,7 +22,10 @@ def _to_result(d: dict) -> DiagnosisResult:
         status=d.get('status', ''),
         scores=DiagnosisScores(**scores) if isinstance(scores, dict) else None,
         findings=[Finding(**f) if isinstance(f, dict) else f for f in d.get('findings', [])],
-        recommendations=d.get('recommendations', []),
+        recommendations=[
+            Recommendation(**r) if isinstance(r, dict) else Recommendation(action=str(r))
+            for r in d.get('recommendations', [])
+        ],
         credits_used=d.get('credits_used', 5),
         created_at=d.get('created_at', ''),
         completed_at=d.get('completed_at'),

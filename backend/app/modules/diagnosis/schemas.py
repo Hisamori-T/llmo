@@ -17,6 +17,14 @@ class Finding(BaseModel):
     description: str
 
 
+class Recommendation(BaseModel):
+    action: str = ''
+    priority: str = ''
+    category: str = ''
+    impact: str = ''
+    timeline: str = ''
+
+
 class RunDiagnosisRequest(BaseModel):
     client_id: str
     keyword_id: Optional[str] = None
@@ -34,7 +42,7 @@ class DiagnosisResult(BaseModel):
     status: str
     scores: Optional[DiagnosisScores] = None
     findings: list[Finding] = []
-    recommendations: list[str] = []
+    recommendations: list[Recommendation] = []
     credits_used: int
     created_at: str
     completed_at: Optional[str] = None

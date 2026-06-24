@@ -23,6 +23,14 @@ interface Finding {
   description: string;
 }
 
+interface Recommendation {
+  action: string;
+  priority?: string;
+  category?: string;
+  impact?: string;
+  timeline?: string;
+}
+
 interface BackendDiagnosis {
   diagnosis_id: string;
   client_id: string;
@@ -33,7 +41,7 @@ interface BackendDiagnosis {
   status: string;
   scores: DiagnosisScores | null;
   findings: Finding[];
-  recommendations: string[];
+  recommendations: Recommendation[];
   credits_used: number;
   created_at: string;
   completed_at: string | null;
@@ -199,7 +207,11 @@ export default function DiagnosisDetailPage() {
               <ul className="space-y-2">
                 {diagnosis.recommendations.map((r, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm text-body">
-                    <span className="text-primary-500 mt-0.5 flex-shrink-0">→</span>{r}
+                    <span className="text-primary-500 mt-0.5 flex-shrink-0">→</span>
+                    <span>
+                      {r.action}
+                      {r.timeline && <span className="ml-2 text-xs text-slate-400">({r.timeline})</span>}
+                    </span>
                   </li>
                 ))}
               </ul>
