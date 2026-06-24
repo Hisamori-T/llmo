@@ -1750,3 +1750,18 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 4. **tech debt**: サイドバークレジット表示ズレ（保留中）
 
 ---
+
+## Session 2026-06-24-12
+
+### 作業内容（予定）
+- 詳細診断の非同期化（BackgroundTask）＋進捗ゲージ（A案：段階＋件数）実装
+- DESIGN-diagnosis-progress-v1.md に基づく実装。diagnosisモジュールのみ変更
+- Alembic 0004：diagnoses に progress_stage/progress_detail 追加（create_all禁止）
+- router.py: POST 202 即返し・二重起動防止409・BackgroundTask登録
+- services.py: run_bg()・update_progress()・_run_detailed_diagnosis進捗コールバック
+- schemas.py: ProgressInfo追加・DiagnosisResultにprogress追加
+- frontend new/page.tsx: POSTが202になったので即リダイレクト動作を確認
+- frontend [id]/page.tsx: 進捗ゲージ表示・failed状態表示追加
+- 非範囲: 部分成功按分課金・Tavily再診断検証
+
+---
