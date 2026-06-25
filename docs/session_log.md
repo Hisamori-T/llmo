@@ -1819,3 +1819,31 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - 同上（前セッションより引き継ぎ）
 
 ---
+
+## Session 2026-06-25（夕）
+
+### 作業内容
+- 診断ID b5487643（simple診断）の発見事項ハルシネーション調査
+  - ai_analysis/keyword_analysis はsimple診断では常にnull（Tavily・多LLM不使用）
+  - findingsはGeminiの学習データのみから生成 → 実ページ未参照のため業種一般論が出る
+- キーが本番コンテナに効いているか確認
+  - OPENAI_API_KEY・TAVILY_API_KEY ともに正常注入済み
+  - GPT-4o は 429 insufficient_quota（OpenAIアカウントのクレジット残高ゼロ）= キー設定問題ではなく課金問題
+  - Gemini・Tavily は正常動作確認
+- LLMO Scoreクレジット残量リセット（テスト使い切り）: bb07d5a1 メンバーの monthly_credit_used を0にリセット
+- optimization詳細ページのダウンロードボタン修正
+  - 原因: 存在しないAPIエンドポイントへの直リンク + Authorizationヘッダ未付与 + token変数dead code
+  - 修正: state内の既取得データをBlob化してローカル保存（APIリクエスト不要）
+  - JSON→application/json、txt/robots.txt→text/plain
+  - TypeScriptエラー（keyof Optimization型不整合）も修正してビルド成功
+
+### 変更ファイル
+- `frontend/app/dashboard/optimizations/[id]/page.tsx`（ダウンロードBlob化・API_BASE定数削除・dead code削除）
+
+### 次のアクション
+- OpenAIアカウントへの入金 → 初の本当の多LLM診断 → degraded消灯・発見事項品質確認
+- 発見事項のページ接地（_SYNTHESIS_PROMPTにTavily実データを渡す設計）
+- PDF文字化け動作確認（Dockerfile修正済みだが未検証）
+- tech debt: next_execution String→DateTime / audit_logs wiring / Pro/Enterprise クレジット数不一致
+
+---
