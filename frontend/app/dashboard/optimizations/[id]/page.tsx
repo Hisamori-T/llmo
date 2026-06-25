@@ -234,7 +234,7 @@ export default function OptimizationDetailPage() {
                   )}
 
                   <button
-                    onClick={() => downloadArtifact(key as string)}
+                    onClick={() => downloadArtifact(key)}
                     className="mt-auto inline-flex items-center justify-center gap-2 h-8 px-3 text-sm font-medium bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-gray-50 cursor-pointer"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
