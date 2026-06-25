@@ -31,8 +31,6 @@ interface Optimization {
   error: string | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'https://llmo.fact-ally.com/api';
-
 const ARTIFACTS: { key: keyof Optimization; label: string; filename: string }[] = [
   { key: 'json_ld',       label: 'JSON-LD',       filename: 'json_ld.json' },
   { key: 'faq_structure', label: 'FAQスキーマ',   filename: 'faq_structure.json' },
@@ -66,15 +64,23 @@ export default function OptimizationDetailPage() {
     return () => clearTimeout(timer);
   }, [opt, fetchOpt]);
 
-  function downloadArtifact(artifactKey: string) {
-    const token = (apiClient.defaults.headers.common?.['Authorization'] as string)?.replace('Bearer ', '') ?? '';
-    const url = `${API_BASE}/optimizations/${id}/download/${artifactKey}`;
+  function downloadArtifact(artifactKey: keyof Optimization) {
+    const artifact = ARTIFACTS.find((a) => a.key === artifactKey);
+    if (!artifact || !opt) return;
+    const value = opt[artifactKey];
+    if (value === null || value === undefined) return;
+    const isJson = artifact.filename.endsWith('.json');
+    const content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const mime = isJson ? 'application/json' : 'text/plain';
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = '';
+    a.download = artifact.filename;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   if (loading) {
