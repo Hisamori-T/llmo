@@ -1858,3 +1858,27 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - agency_idスコープで越境遮断
 - 非範囲: content側UI・一次情報テンプレート
 
+
+### 作業結果
+- `GET /diagnoses/keyword-scores?client_id=...` 実装・デプロイ完了
+- 全4検証ケース PASS:
+  - Case1 ベルベール(detailed): `scores:{...8keywords...}` 200 ✓
+  - Case2 存在しないclient_id: `{diagnosis_id:null,scores:{}}` 200 ✓
+  - Case3 route順序: `/keyword-scores` が `/{diagnosis_id}` に吸われず正常解決 ✓
+  - Case4 最新がsimple診断: `{diagnosis_id:<id>,scores:{},diagnosis_type:"simple"}` 200 ✓
+
+### 変更ファイル
+- `backend/app/modules/diagnosis/schemas.py` — `KeywordScoresResponse` 追加
+- `backend/app/modules/diagnosis/services.py` — `DiagnosisService.get_keyword_scores()` 追加
+- `backend/app/modules/diagnosis/router.py` — `GET /keyword-scores` を `GET /{diagnosis_id}` より前に追加、`KeywordScoresResponse` import
+- `docs/redesign/DESIGN-keyword-scores-api-v1.md` — 設計書（新規）
+
+### 次のアクション
+- ②本体: content側のUI実装（articles/new に「✨診断から提案」ボタン追加）
+  - 本APIを叩き、scores昇順ソート(低=弱点)でキーワード候補提示
+  - scores={} なら `/keywords/suggest` にフォールバック
+  - 設計は別設計書で承認後に着手
+- ①一次情報テンプレート（別設計）
+- テスト用に変更したパスワードを元に戻す（ユーザー側で実施）
+
+---
