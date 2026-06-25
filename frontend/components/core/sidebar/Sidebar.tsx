@@ -77,17 +77,23 @@ export function Sidebar() {
           <div className="mt-6 p-3 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-slate-500">クレジット残量</span>
-              <span className="text-xs font-medium text-slate-900">{user.monthlyCreditsUsed}/{user.monthlyCreditsLimit}</span>
+              <span className="text-xs font-medium text-slate-900">{user.creditsRemaining}/{user.monthlyCreditsLimit}</span>
             </div>
             <div className="bg-slate-200 rounded-full h-2">
-              <div
-                className={cn('h-2 rounded-full', user.monthlyCreditsUsed / user.monthlyCreditsLimit > 0.8 ? 'bg-amber-500' : 'bg-primary-500')}
-                style={{ width: `${Math.min((user.monthlyCreditsUsed / user.monthlyCreditsLimit) * 100, 100)}%` }}
-                role="progressbar"
-                aria-valuenow={user.monthlyCreditsUsed}
-                aria-valuemin={0}
-                aria-valuemax={user.monthlyCreditsLimit}
-              />
+              {(() => {
+                const ratio = user.monthlyCreditsLimit > 0 ? user.creditsRemaining / user.monthlyCreditsLimit : 0;
+                const barColor = ratio <= 0.2 ? 'bg-red-500' : ratio <= 0.5 ? 'bg-amber-500' : 'bg-primary-500';
+                return (
+                  <div
+                    className={cn('h-2 rounded-full transition-all', barColor)}
+                    style={{ width: `${Math.min(ratio * 100, 100)}%` }}
+                    role="progressbar"
+                    aria-valuenow={user.creditsRemaining}
+                    aria-valuemin={0}
+                    aria-valuemax={user.monthlyCreditsLimit}
+                  />
+                );
+              })()}
             </div>
           </div>
         )}

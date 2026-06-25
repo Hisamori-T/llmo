@@ -10,6 +10,7 @@ export interface User {
   role: UserRole;
   monthlyCreditsUsed: number;
   monthlyCreditsLimit: number;
+  creditsRemaining: number;
   createdAt: string;
 }
 

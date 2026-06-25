@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: d.role,
         monthlyCreditsUsed: d.monthly_credit_used ?? 0,
         monthlyCreditsLimit: d.monthly_credit_limit ?? 0,
+        creditsRemaining: d.credits_remaining ?? Math.max(0, (d.monthly_credit_limit ?? 0) - (d.monthly_credit_used ?? 0)),
         createdAt: d.created_at ?? '',
       });
     } catch {
