@@ -1882,3 +1882,34 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - テスト用に変更したパスワードを元に戻す（ユーザー側で実施）
 
 ---
+
+## ⚠️ 次セッション開始前に必ず実施（パスワードリセット残件）
+
+**対象**: `users` テーブル / email: `hisa1975@gmail.com`
+**状況**: keyword-scores API 検証のために SSH curl テスト用パスワードを `TestPass123!` に書き換えた。
+**元のパスワードは不明**（ログインできず確認不可）。
+
+**対処手順（ブラウザからログインできない場合）**:
+1. VPS SSH で API コンテナに入る
+2. 以下で任意の新パスワードに再設定:
+```bash
+docker exec llmo-api-1 python3 -c "
+import bcrypt, asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
+
+async def reset():
+    engine = create_async_engine('postgresql+asyncpg://llmo:llmo_secret@db:5432/llmo_v4')
+    h = bcrypt.hashpw(b'新しいパスワード', bcrypt.gensalt(12)).decode()
+    async with engine.begin() as conn:
+        await conn.execute(text(\"UPDATE users SET password_hash=:h WHERE email='hisa1975@gmail.com'\"), {'h': h})
+    await engine.dispose()
+    print('done')
+
+asyncio.run(reset())
+"
+```
+3. 設定したパスワードでブラウザからログインできることを確認
+4. このメモを削除してよい
+
+---
