@@ -551,3 +551,28 @@ class DiagnosisService:
         if not doc or doc.get('agency_id') != agency_id:
             return None
         return doc
+
+    async def get_keyword_scores(self, client_id: str, agency_id: str) -> dict:
+        _empty: dict = {'diagnosis_id': None, 'diagnosis_type': None, 'scores': {}, 'diagnosed_at': None}
+
+        client = await db_get('clients', client_id)
+        if not client or client.get('agency_id') != agency_id:
+            return _empty
+
+        latest_id = client.get('latest_diagnosis_id')
+        if not latest_id:
+            return _empty
+
+        diag = await db_get('diagnoses', latest_id)
+        if not diag:
+            return _empty
+
+        ka = diag.get('keyword_analysis')
+        scores: dict[str, int] = ka.get('scores', {}) if isinstance(ka, dict) else {}
+
+        return {
+            'diagnosis_id': diag.get('diagnosis_id') or latest_id,
+            'diagnosis_type': diag.get('type'),
+            'scores': scores,
+            'diagnosed_at': diag.get('completed_at'),
+        }

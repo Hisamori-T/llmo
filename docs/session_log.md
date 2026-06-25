@@ -1847,3 +1847,14 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - tech debt: next_execution String→DateTime / audit_logs wiring / Pro/Enterprise クレジット数不一致
 
 ---
+
+## Session 2026-06-25（夜）
+
+### 作業内容（予定）
+- diagnosisモジュールに最新診断キーワードスコア取得API追加（②キーワード診断連動の基盤）
+- `GET /diagnoses/keyword-scores?client_id=...` — `/{diagnosis_id}` より前に定義（route吸い込み防止）
+- 生データ返却（ソート・弱点判定はcontent側の責務）
+- simple診断/診断無しケースは空scores 200（404にしない）
+- agency_idスコープで越境遮断
+- 非範囲: content側UI・一次情報テンプレート
+

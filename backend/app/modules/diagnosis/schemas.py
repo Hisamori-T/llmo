@@ -38,6 +38,13 @@ class RunDiagnosisRequest(BaseModel):
     type: str = 'simple'  # simple / detailed
 
 
+class KeywordScoresResponse(BaseModel):
+    diagnosis_id: Optional[str] = None
+    diagnosis_type: Optional[str] = None
+    scores: dict[str, int] = {}
+    diagnosed_at: Optional[str] = None
+
+
 class DiagnosisResult(BaseModel):
     diagnosis_id: str
     client_id: str

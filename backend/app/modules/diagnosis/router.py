@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from app.shared.api.deps import CurrentUser, get_current_user, require_role
 from app.shared.db.firestore import db_get, db_query, db_set
 from app.shared.constants.plans import CREDIT_COSTS
-from .schemas import DiagnosisResult, DiagnosisScores, Finding, ProgressInfo, Recommendation, RunDiagnosisRequest
+from .schemas import DiagnosisResult, DiagnosisScores, Finding, KeywordScoresResponse, ProgressInfo, Recommendation, RunDiagnosisRequest
 from .services import DiagnosisService
 
 router = APIRouter(tags=['diagnoses'])
@@ -153,6 +153,15 @@ async def list_diagnoses(
         limit=limit,
     )
     return [_to_result(d) for d in docs]
+
+
+@router.get('/keyword-scores', response_model=KeywordScoresResponse)
+async def get_keyword_scores(
+    client_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    result = await _svc.get_keyword_scores(client_id, current_user.agency_id)
+    return KeywordScoresResponse(**result)
 
 
 @router.get('/{diagnosis_id}', response_model=DiagnosisResult)
