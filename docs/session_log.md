@@ -1765,3 +1765,34 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - 非範囲: 部分成功按分課金・Tavily再診断検証
 
 ---
+
+## Session 2026-06-25
+
+### 作業内容
+- 前セッションで設計・承認済みの「詳細診断BackgroundTask化+進捗ゲージ（A案）」を実装
+- Alembic 0004: diagnoses テーブルに progress_stage/progress_detail 列追加
+- services.py: update_progress()追加・_run_detailed_diagnosisにキーワードループ内進捗更新追加・run_bg()追加（BG内例外をDBに記録しre-raiseしない）
+- router.py: POST を202即返しに変更・BackgroundTask登録・409重複防止・402残高チェック
+- schemas.py: ProgressInfoモデル追加・DiagnosisResult.progress追加
+- [id]/page.tsx: 段階別進捗表示（キーワード生成中/AI診断中 N/M/集計中）・プログレスバー・failed表示・再実行リンク追加
+- VPS: git pull → docker compose build (メモリ枯渇でハング→スワップ追加後リブート→1サービスずつビルド) → alembic upgrade 0003→0004
+
+### 動作確認（本番VPS）
+- POST /api/diagnoses が即返り（「診断実行中...」固まりなし、即リダイレクト）: OK
+- [id]ページでAI診断中 (N/8) 進捗ゲージ表示: OK
+- 完了後にスコア・発見事項・推奨事項表示に切り替わり: OK
+
+### 変更ファイル
+- `backend/app/shared/db/models.py`
+- `backend/alembic/versions/0004_add_diagnosis_progress_columns.py`（新規）
+- `backend/app/modules/diagnosis/schemas.py`
+- `backend/app/modules/diagnosis/services.py`
+- `backend/app/modules/diagnosis/router.py`
+- `frontend/app/dashboard/diagnoses/[id]/page.tsx`
+
+### 次のアクション
+- tech debt（低優先）: サイドバーのクレジット表示ずれ / next_execution String→DateTime migration / audit_logs wiring / Pro/Enterprise クレジット数フロント-バック不一致 / LINE user_id フロー
+- PDF文字化け修正の動作再確認（reportingモジュール・前セッションでDockerfile修正済み）
+- 「AI認識スコア88」の信頼性検証（hallucination疑い・前セッション持ち越し）
+
+---
