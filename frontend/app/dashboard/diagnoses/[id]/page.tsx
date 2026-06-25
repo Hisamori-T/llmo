@@ -31,6 +31,12 @@ interface Recommendation {
   timeline?: string;
 }
 
+interface ProgressInfo {
+  stage: string;
+  current?: number;
+  total?: number;
+}
+
 interface BackendDiagnosis {
   diagnosis_id: string;
   client_id: string;
@@ -46,6 +52,7 @@ interface BackendDiagnosis {
   created_at: string;
   completed_at: string | null;
   degraded: boolean;
+  progress: ProgressInfo | null;
 }
 
 interface Client {
@@ -133,17 +140,48 @@ export default function DiagnosisDetailPage() {
             {formatDate(diagnosis.created_at)}
           </p>
         </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-medium ${diagnosis.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : diagnosis.status === 'running' ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-700'}`}>
+        <span className={`px-3 py-1 rounded-full text-xs font-medium ${diagnosis.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : diagnosis.status === 'running' ? 'bg-primary-100 text-primary-700' : diagnosis.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
           {diagnosis.status === 'running' && <span className="animate-spin inline-block mr-1">⟳</span>}
           {{ completed: '完了', running: '診断中...', failed: 'エラー', pending: '待機中' }[diagnosis.status] ?? diagnosis.status}
         </span>
       </div>
 
-      {diagnosis.status === 'running' || diagnosis.status === 'pending' ? (
+      {diagnosis.status === 'failed' ? (
+        <div className="bg-white rounded-xl border border-red-200 p-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008z" /></svg>
+          </div>
+          <p className="text-base font-medium text-slate-900">診断に失敗しました</p>
+          <p className="text-sm text-body mt-1">クレジットは消費されていません。</p>
+          <Link href="/dashboard/diagnoses/new" className="inline-flex items-center justify-center h-10 px-4 mt-4 text-sm font-medium bg-primary-500 text-white rounded-lg hover:bg-primary-700">
+            再実行する
+          </Link>
+        </div>
+      ) : diagnosis.status === 'running' || diagnosis.status === 'pending' ? (
         <div className="bg-white rounded-xl border border-slate-200 p-10 text-center">
           <div className="w-12 h-12 border-4 border-primary-200 border-t-primary-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-base font-medium text-slate-900">診断を実行しています...</p>
-          <p className="text-sm text-body mt-1">しばらくお待ちください。自動的に更新されます。</p>
+          <p className="text-base font-medium text-slate-900">
+            {diagnosis.progress?.stage === 'querying_llms' && diagnosis.progress.current != null && diagnosis.progress.total != null
+              ? `AI診断中 (${diagnosis.progress.current}/${diagnosis.progress.total})`
+              : diagnosis.progress?.stage === 'aggregating'
+              ? '集計中...'
+              : 'キーワード生成中...'}
+          </p>
+          <p className="text-sm text-body mt-1">自動的に更新されます。このページを閉じても診断は続行されます。</p>
+          <div className="mt-4 max-w-xs mx-auto">
+            <div className="bg-slate-200 rounded-full h-1.5">
+              <div
+                className="h-1.5 rounded-full bg-primary-500 transition-all duration-700"
+                style={{ width: `${
+                  diagnosis.progress?.stage === 'querying_llms' && diagnosis.progress.current != null && diagnosis.progress.total != null
+                    ? Math.round(10 + (diagnosis.progress.current / diagnosis.progress.total) * 70)
+                    : diagnosis.progress?.stage === 'aggregating'
+                    ? 85
+                    : 5
+                }%` }}
+              />
+            </div>
+          </div>
         </div>
       ) : diagnosis.status === 'completed' && (
         <>

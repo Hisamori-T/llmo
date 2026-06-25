@@ -25,6 +25,12 @@ class Recommendation(BaseModel):
     timeline: str = ''
 
 
+class ProgressInfo(BaseModel):
+    stage: str
+    current: Optional[int] = None
+    total: Optional[int] = None
+
+
 class RunDiagnosisRequest(BaseModel):
     client_id: str
     keyword_id: Optional[str] = None
@@ -47,3 +53,4 @@ class DiagnosisResult(BaseModel):
     created_at: str
     completed_at: Optional[str] = None
     degraded: bool = False
+    progress: Optional[ProgressInfo] = None

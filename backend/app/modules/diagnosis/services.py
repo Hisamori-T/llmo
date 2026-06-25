@@ -120,6 +120,13 @@ _SYNTHESIS_PROMPT = """\
 findingsは8件以上、recommendationsは8件以上（優先度順）。"""
 
 
+async def update_progress(diagnosis_id: str, stage: str, detail: Optional[dict] = None) -> None:
+    update_data: dict = {'progress_stage': stage}
+    if detail is not None:
+        update_data['progress_detail'] = detail
+    await db_update('diagnoses', diagnosis_id, update_data)
+
+
 def _extract_json(text: str) -> Optional[dict]:
     text = text.strip()
     text = re.sub(r'^```(?:json)?\s*', '', text)
@@ -198,6 +205,7 @@ def _calc_citation_scores(keyword_results: dict) -> dict:
 
 async def _run_detailed_diagnosis(
     name: str, url: str, industry: str, location: str, keywords: list[str],
+    diagnosis_id: Optional[str] = None,
 ) -> dict:
     # 1. Tavily grounding
     business_evidence = await search_business(url, name)
@@ -210,8 +218,12 @@ async def _run_detailed_diagnosis(
     raw_evidence: dict[str, dict] = {}
     total_calls = 0
     failed_calls = 0
+    total_keywords = len(keywords[:8])
 
-    for kw in keywords[:8]:
+    if diagnosis_id:
+        await update_progress(diagnosis_id, 'querying_llms', {'current': 0, 'total': total_keywords})
+
+    for i, kw in enumerate(keywords[:8], start=1):
         kw_evidence = await search_keyword(kw, location)
         kw_evidence_text = evidence_text + '\n' + '\n'.join(
             f'- {r["title"]}: {r["content"][:150]}' for r in kw_evidence[:2]
@@ -243,11 +255,16 @@ async def _run_detailed_diagnosis(
                 # Including it would halve all scores by adding a phantom zero to n_ai.
                 raw_evidence[kw][model_name] = f'error: {resp.error}'
 
+        if diagnosis_id:
+            await update_progress(diagnosis_id, 'querying_llms', {'current': i, 'total': total_keywords})
+
     # All LLM calls failed → total failure, caller should not charge
     if total_calls > 0 and failed_calls == total_calls:
         raise RuntimeError('All LLM calls failed — no valid responses')
 
-    # 3. Citation score calculation
+    # 3. Citation score calculation + synthesis
+    if diagnosis_id:
+        await update_progress(diagnosis_id, 'aggregating')
     citation = _calc_citation_scores(keyword_results)
     overall = citation['overall']
     ai_awareness = citation['ai_awareness']
@@ -431,6 +448,87 @@ class DiagnosisService:
             raise
 
         return await db_get('diagnoses', diagnosis_id)
+
+    async def run_bg(
+        self,
+        diagnosis_id: str,
+        client_id: str,
+        agency_id: str,
+        member_id: str,
+        keywords: list[str],
+        diagnosis_type: str = 'detailed',
+        source: str = 'manual',
+    ) -> None:
+        """BackgroundTask entry. Diagnosis record is already INSERTed by router (status=running)."""
+        import logging
+        logger = logging.getLogger(__name__)
+        operation = 'simple_diagnosis' if diagnosis_type == 'simple' else 'detailed_diagnosis'
+        try:
+            client = await db_get('clients', client_id)
+            if not client:
+                raise ValueError('Client not found')
+
+            await update_progress(diagnosis_id, 'generating_keywords')
+
+            if diagnosis_type == 'detailed':
+                result, degraded = await _run_detailed_diagnosis(
+                    name=client.get('name', ''),
+                    url=client.get('url', ''),
+                    industry=client.get('industry', ''),
+                    location=client.get('location', ''),
+                    keywords=keywords,
+                    diagnosis_id=diagnosis_id,
+                )
+            else:
+                result, degraded = await _run_simple_diagnosis(
+                    name=client.get('name', ''),
+                    url=client.get('url', ''),
+                    industry=client.get('industry', ''),
+                    location=client.get('location', ''),
+                    keywords=keywords,
+                )
+
+            if source == 'manual':
+                await check_and_deduct(
+                    member_id, operation,
+                    resource_id=diagnosis_id,
+                    client_id=client_id,
+                )
+
+            completed_at = datetime.now(timezone.utc).isoformat()
+            await db_update('diagnoses', diagnosis_id, {
+                'scores': result['scores'],
+                'ai_analysis': result.get('ai_analysis'),
+                'keyword_analysis': result.get('keyword_analysis'),
+                'findings': result.get('findings', []),
+                'recommendations': result.get('recommendations', []),
+                'projections': result.get('projections'),
+                'raw_evidence': result.get('raw_evidence'),
+                'status': 'completed',
+                'progress_stage': 'completed',
+                'degraded': degraded,
+                'completed_at': completed_at,
+            })
+
+            overall = result['scores'].get('overall', 0)
+            await db_update('clients', client_id, {
+                'latest_diagnosis_id': diagnosis_id,
+                'latest_score': overall,
+                'updated_at': completed_at,
+            })
+
+        except Exception as e:
+            logger.error(
+                'BackgroundTask diagnosis failed: diagnosis_id=%s error=%s',
+                diagnosis_id, e, exc_info=True,
+            )
+            await db_update('diagnoses', diagnosis_id, {
+                'status': 'failed',
+                'progress_stage': 'failed',
+                'error': str(e),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            # No re-raise: BackgroundTask context, HTTP boundary already returned 202
 
     async def list_diagnoses(
         self,

@@ -137,6 +137,8 @@ class Diagnosis(Base):
     raw_evidence = Column(JSONB)       # Tavily取得本文・各AI生回答
     source = Column(String(50), default='manual')  # manual | automation_monthly | automation_weekly
     degraded = Column(Boolean, default=False)  # 片側LLM失敗時に True（FIX-5）
+    progress_stage = Column(String(32))        # generating_keywords|querying_llms|aggregating|completed|failed
+    progress_detail = Column(JSONB)            # {"current": 3, "total": 8} — querying_llms 中のみ
     retain_until = Column(String(64))          # raw_evidence の保持期限（created_at+90日）
     credits_used = Column(Integer, default=5)
     created_at = Column(String(64))
