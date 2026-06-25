@@ -1791,8 +1791,31 @@ VPS rebuild 後 `ls /usr/share/fonts/opentype/ipafont-gothic/` → `ipag.ttf ipa
 - `frontend/app/dashboard/diagnoses/[id]/page.tsx`
 
 ### 次のアクション
-- tech debt（低優先）: サイドバーのクレジット表示ずれ / next_execution String→DateTime migration / audit_logs wiring / Pro/Enterprise クレジット数フロント-バック不一致 / LINE user_id フロー
+- tech debt（低優先）: next_execution String→DateTime migration / audit_logs wiring / Pro/Enterprise クレジット数フロント-バック不一致 / LINE user_id フロー
 - PDF文字化け修正の動作再確認（reportingモジュール・前セッションでDockerfile修正済み）
 - 「AI認識スコア88」の信頼性検証（hallucination疑い・前セッション持ち越し）
+- GPT-4o 復活後の初フル多LLM診断→degraded消灯確認・発見事項品質確認
+- 発見事項のページ接地（_SYNTHESIS_PROMPTにTavily実データを渡す設計）
+
+---
+
+## Session 2026-06-25（後半）
+
+### 作業内容（予定）
+- サイドバーのクレジット残量表示バグ修正（フロントのみ）
+
+### 作業結果
+- `User`型に`creditsRemaining`追加（`frontend/lib/types/core.ts`）
+- `auth-context.tsx`: バックエンドの`credits_remaining`を`creditsRemaining`にマッピング。フォールバック: APIが古い形でも`limit-used`で代替計算
+- `Sidebar.tsx`: 分子を`monthlyCreditsUsed`→`creditsRemaining`に変更（80/100表示）。バー幅を残量割合に変更（使うほど縮む）。残量割合で色変化: >50%=primary / 20-50%=amber / ≤20%=red
+- 設計方針: 残量計算はバックエンドの`credits_remaining`を正とし、フロント再計算はフォールバックのみ（将来の繰り越し・共有枠拡張への耐性）
+
+### 変更ファイル
+- `frontend/lib/types/core.ts`
+- `frontend/lib/auth-context.tsx`
+- `frontend/components/core/sidebar/Sidebar.tsx`
+
+### 次のアクション
+- 同上（前セッションより引き継ぎ）
 
 ---
