@@ -1947,3 +1947,15 @@ asyncio.run(reset())
   - 既存ui/ディレクトリの有無を先に確認
 
 ---
+
+## Session 2026-06-26（フェーズB）
+
+### 作業内容（予定）
+- フェーズB-1: Button コンポーネント実装
+  - 配置: frontend/components/ui/Button.tsx（ディレクトリ新規作成）
+  - primary = bg-primary-600(#45669B) / hover:bg-primary-700(#38537F)
+    ※primary-500(#6B8EC7)はbutton用途では使わない（設計書§Button仕様に従い）
+  - 全variant: primary / secondary / ghost / danger / disabled
+  - 統一: h-10(40px) / rounded(6px=DEFAULT) / text-[14px] font-semibold
+  - アイコン併用: Material Symbols 18px + gap-1.5
+
