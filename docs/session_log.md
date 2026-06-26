@@ -1959,3 +1959,13 @@ asyncio.run(reset())
   - 統一: h-10(40px) / rounded(6px=DEFAULT) / text-[14px] font-semibold
   - アイコン併用: Material Symbols 18px + gap-1.5
 
+
+### 作業内容（予定）B-2/B-3
+- フェーズB-2: Input コンポーネント実装（frontend/components/ui/Input.tsx）
+  - SSOT確認済: h-10 / px-[14px] / bg-#FDFBF5 / border-border-strong(#D2C7B2) / rounded(6px) / text-[14px] / text-ink-800(#3A3833)
+  - focus: border-primary-600(#45669B) + shadow-focus(0 0 0 3px rgba(69,102,155,.22))
+  - SSOT未明示→既定: placeholder=ink-400 / error=border-danger / disabled=bg-surface-subtle+text-ink-400
+- フェーズB-3: Select コンポーネント実装（frontend/components/ui/Select.tsx）
+  - SSOT確認済: Input共通値 + padding 0 38px 0 14px / appearance-none / expand_more icon(right:12px/20px/#A39C8B)
+  - ラッパーdivで絶対配置アイコン配置
+
