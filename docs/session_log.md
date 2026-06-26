@@ -2253,3 +2253,10 @@ asyncio.run(reset())
 - VPS デプロイ: v4-rebuild push → docker compose build web → restart
 
 ---
+
+## Session 2026-06-26-C-fix（背景適用修正）
+
+### 作業内容（予定）
+- フェーズC-fix: ページ背景 #F6F1E7 の適用漏れ修正
+- 変更禁止: コンポーネントのロジック・構造
+- SSOT確定: 背景#F6F1E7 / カード#FDFBF5 / サブ#F1EADC

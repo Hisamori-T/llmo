@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-surface-app">
       <Sidebar />
       <DashboardMain>{children}</DashboardMain>
     </div>
