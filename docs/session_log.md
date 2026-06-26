@@ -1969,3 +1969,287 @@ asyncio.run(reset())
   - SSOT確認済: Input共通値 + padding 0 38px 0 14px / appearance-none / expand_more icon(right:12px/20px/#A39C8B)
   - ラッパーdivで絶対配置アイコン配置
 
+### 作業結果（フェーズB-1/B-2/B-3 完了）
+
+#### Button（frontend/components/ui/Button.tsx）
+- variant 4種（primary/secondary/ghost/danger）+ disabled 状態を実装
+- primary: bg-primary-600(#45669B) / hover:bg-primary-700(#38537F)
+- secondary: bg-#FDFBF5 / border-border-strong / hover:surface-hover
+- ghost: bg-transparent / text-primary-600 / hover:surface-hover
+- danger: bg-danger(#CF4A41) / hover:#b83d35
+- disabled: bg-[#A9BBD8] / text-white / cursor-not-allowed（全variant共通 Tailwind disabled:pseudo-class で上書き）
+- 統一: h-10(40px) / rounded(6px) / text-[14px] font-semibold / Material Symbols アイコン 18px+gap-1.5
+
+#### Input（frontend/components/ui/Input.tsx）
+- SSOT値: h-10 / px-[14px] / bg-[#FDFBF5] / border-border-strong / rounded(6px) / text-[14px] / text-ink-800
+- focus: border-primary-600 + shadow-focus(0 0 0 3px rgba(69,102,155,.22))
+- error prop: border-danger 切替
+- disabled: bg-surface-subtle / text-ink-400 / cursor-not-allowed
+
+#### Select（frontend/components/ui/Select.tsx）
+- Input と共通基盤 + pr-[38px] / appearance-none / expand_more アイコン(right:12px/20px/text-ink-400)
+- ラッパー div で絶対配置アイコン（pointer-events-none / top-1/2 -translate-y-1/2）
+- error/disabled 挙動は Input と同一
+
+### 変更ファイル（B-1/B-2/B-3）
+- `frontend/components/ui/Button.tsx`（新規）
+- `frontend/components/ui/Input.tsx`（新規）
+- `frontend/components/ui/Select.tsx`（新規）
+
+---
+
+## Session 2026-06-26-B4B5（フェーズB-4/B-5）
+
+### 作業内容（予定）
+- フェーズB-4: ScoreBadge コンポーネント実装（frontend/components/ui/ScoreBadge.tsx）
+  - SSOT確認済（LLMO Score Dashboard.html）: inline-flex / align-items:baseline / gap:1px / padding:3px 9px / border-radius:5px
+  - 数値: font-bold text-[14px] / 色はtier依存
+  - /100: font 500 11px / color:#A8A192（固定値）
+  - tier境界: score≤49→赤(bg:#FBE7E3/text:#CF4A41) / 50≤score≤79→アンバー(bg:#FBF0D5/text:#C28A1E) / score≥80→緑(bg:#E6F1E7/text:#3F8C5C)
+- フェーズB-5: StatusBadge コンポーネント実装（frontend/components/ui/StatusBadge.tsx）
+  - SSOT確認済: inline-flex / align-items:center / gap:5px / padding:3px 10px 3px 8px / border-radius:5px
+  - ドット: 6×6px / border-radius:50% / font:600 12px
+  - completed: bg:#E6F1E7 / dot:#3F8C5C / text:#2E6B45
+  - running: bg:#FBF0D5 / dot:#C28A1E / text:#9A7415
+  - failed: danger色流用（bg:#FBE7E3 / dot:#CF4A41 / text:#CF4A41）
+  - pending: neutral（bg:surface-subtle / dot:ink-400 / text:ink-500）
+  - ラベルマッピング: completed=完了 / running=実行中 / failed=エラー / pending=待機中
+
+### 作業結果（フェーズB-4/B-5完了）
+
+#### ScoreBadge（frontend/components/ui/ScoreBadge.tsx）
+- SSOT値をインラインスタイルで忠実実装
+- tier判定ロジック: score≥80→high / 50-79→mid / ≤49→low
+- 境界条件: 50はamber(mid) / 80はgreen(high) — 設計書通り
+- `/100` suffix: #A8A192 固定（ink-400とは別の値）
+
+#### StatusBadge（frontend/components/ui/StatusBadge.tsx）
+- 4ステータス対応: completed/running/failed/pending
+- SSOT確認済 completed(#2E6B45) / running(#9A7415) を使用
+- failed: danger色流用（#CF4A41）
+- pending: SSOT未記載→neutral（#F1EADC/ink-400/#837D6F）
+- 未知ステータスはfallbackで status値をそのまま表示
+
+### 変更ファイル
+- `frontend/components/ui/ScoreBadge.tsx`（新規）
+- `frontend/components/ui/StatusBadge.tsx`（新規）
+
+### 次のアクション
+- フェーズB-6: Card コンポーネント実装
+- フェーズB-7: Table コンポーネント実装
+- フェーズC: 画面置換（Sidebar → 診断一覧 → 一次情報フォーム → 診断結果）
+- ⚠️ パスワードリセット要: hisa1975@gmail.com を TestPass123! → 元のパスワードに戻す
+  - 変更手順: docker exec llmo-api-1 python3 で bcrypt ハッシュ生成後 llmo_v4 DB の members テーブルを UPDATE
+
+---
+
+## Session 2026-06-26-B6（フェーズB-6）
+
+### 作業内容（予定）
+- フェーズB-6: Card コンポーネント実装（frontend/components/ui/Card.tsx）
+- SSOT確認済（LLMO Score Dashboard.html 全3フレーム）:
+  - background: #FDFBF5 / border: 1px solid #E5DDCE / border-radius: 8px
+  - box-shadow: 0 1px 2px rgba(20,24,33,.04) ← shadow-xs(.05)でもshadow-sm(.08)でもない
+  - padding: フォームカード26px28px / スコアカード26px30px / テーブルラッパー無し → 固定しない
+  - サブコンポーネント(CardHeader等): フレームに構造分離なし → 単一Cardのみ
+- 採用方針:
+  - shadow は inline style で .04 を使用（tokenに存在しないため）
+  - padding は Card が持たない。呼び出し元が className で指定
+
+### 作業結果（フェーズB-6 完了）
+
+#### Card（frontend/components/ui/Card.tsx）
+- HTMLAttributes<HTMLDivElement> を継承（className/onClick/ref など全 HTML 属性を受け渡し可）
+- SSOT値:
+  - bg-[#FDFBF5] / border border-border(#E5DDCE) / rounded-lg(8px)
+  - boxShadow: '0 1px 2px rgba(20,24,33,.04)'（inline style、token不一致のためハードコード）
+- padding は持たない（フレーム用途に応じて呼び出し元が className で指定）
+- サブコンポーネントなし（フレームに分離構造なし）
+
+### SSOT差異報告
+- box-shadow: SSOT = .04 / token shadow-xs = .05 / token shadow-sm = .08 → .04 を採用
+- padding: 固定値なし（フォーム 26px28px / スコア 26px30px / テーブルラッパー 無し → 呼び出し元依存）
+
+### 変更ファイル
+- `frontend/components/ui/Card.tsx`（新規）
+
+### 次のアクション
+- フェーズB-7: Table コンポーネント実装
+- フェーズC: 画面置換（Sidebar → 診断一覧 → 一次情報フォーム → 診断結果）
+
+---
+
+## Session 2026-06-26-B7（フェーズB-7）
+
+### 作業内容（予定）
+- フェーズB-7: Table コンポーネント実装（frontend/components/ui/Table.tsx）
+- SSOT確認済（LLMO Score Dashboard.html 01フレーム・05フレーム）:
+  - thead tr: bg:#F1EADC(surface-subtle) / border-bottom:1px solid #E5DDCE(border-border)
+  - th: 600 12px / color:#837D6F(ink-500) / padding:11px 18px / letter-spacing:.02em
+  - tbody tr: border-bottom:1px solid #EBE3D4(border-border-divider) / last:border-0
+  - td primary: 500 14px / color:#4E4B44(ink-700)
+  - td secondary: 400 13.5px(SSOTのみ・tokenなし) / color:#5E5A51(ink-600)
+  - row hover: SSOT未記載 → surface-hover(#EEE6D7)を既定として採用
+- 方針: セマンティック styled primitive（Table/Thead/Tbody/Tr/Th/Td）
+  - hover は Tr に持たせない（thead/tbody で用途が違うため呼び出し元がclassNameで指定）
+  - td secondary(13.5px)差異はSSOT差異として報告し、Td defaults は14px(body token)を採用
+
+### 作業結果（フェーズB-7 完了）
+
+#### Table（frontend/components/ui/Table.tsx）
+- セマンティック styled primitives: Table / Thead / Tbody / Tr / Th / Td を単一ファイルで export
+- 各コンポーネントはネイティブHTML属性を全spread可能（className/colSpan/onClick等）
+- hover は Tr に持たせない。呼び出し元がclassNameで指定（例: `className="hover:bg-surface-hover transition-colors"`）
+- Td comments でsecondary/meta cell向けのclassName指定方法を明記（推測実装なし）
+
+### SSOT差異報告
+- td secondary font-size: SSOT = 13.5px / bodyトークン = 14px → Td defaults は14pxを採用。13.5pxはclassNameで上書き可（コメントに明記）
+- row hover: SSOT未記載 → `hover:bg-surface-hover(#EEE6D7)`を呼び出し元が指定する設計
+
+### 変更ファイル
+- `frontend/components/ui/Table.tsx`（新規）
+
+### 次のアクション
+- フェーズB 完了。全コンポーネント: Button / Input / Select / ScoreBadge / StatusBadge / Card / Table
+- フェーズC: 画面置換（Sidebar → 診断一覧 → 一次情報フォーム → 診断結果）
+- ⚠️ パスワードリセット要: hisa1975@gmail.com を TestPass123! → 元のパスワードに戻す（復旧済みとの申告あり）
+
+---
+
+## Session 2026-06-26-C1（フェーズC-1）
+
+### 作業内容（予定）
+- フェーズC-1: Sidebar 表示層置換（frontend/components/core/sidebar/Sidebar.tsx）
+- 変更禁止: creditsRemaining取得・バー幅計算・色変化ロジック・auth配線・href・ログアウト処理
+- SSOT確認済（フレーム04）主要差異:
+  - 幅 w-64(256px) → w-60(240px)
+  - bg-white → bg-[#FDFBF5]
+  - NavアイコンSVG → Material Symbols Outlined（20px）
+  - 活性ナビ: bg-primary-50 + text-primary-700(#38537F)/icon-primary-600(#45669B)
+  - クレジット枠: bg-gray-50 → bg-surface-subtle/border-border/rounded
+  - クレジットバー track: bg-slate-200/h-2 → bg-[#E5DDCE]/h-[6px]
+  - アバター: rounded-full → rounded(6px) / bg-primary-50 text-primary-600
+  - プラン: badge → plain text text-ink-400 text-[11px]
+  - ログアウトボタン: h-8/border-slate → h-[34px]/border-border-strong/bg-[#FDFBF5]
+
+### 作業結果（フェーズC-1 完了）
+
+#### Sidebar（frontend/components/core/sidebar/Sidebar.tsx）
+- SVGアイコン → Material Symbols Outlined（20px）に一括置換
+- navItems: { href, label, icon: string } に簡素化
+- ロゴ: primary-600 bg の 27×27px rounded square + `monitoring` アイコン + LLMO Score テキスト
+- ナビ活性: bg-primary-50 / icon-text-primary-600 / label-primary-700 font-semibold
+- ナビ非活性: icon-text-ink-400 / label-ink-600 font-medium / hover:bg-surface-hover
+- クレジット枠: bg-surface-subtle / border-border / rounded（SSOT準拠）
+- クレジットバー track: bg-[#E5DDCE] h-[6px]（SSOT準拠）
+- クレジットバー fill: 既存色変化ロジック無改変（≤20%→bg-danger / ≤50%→bg-warning / >50%→bg-primary-600）
+- アバター: rounded-full → rounded(6px) / bg-primary-50 text-primary-600
+- プラン: getPlanColor badge → getPlanLabel テキストのみ（text-[11px] text-ink-400）
+- ログアウトボタン: h-8 → h-[34px] / border-border-strong / bg-[#FDFBF5]
+- バグ修正: `text-decoration-none`（無効クラス）→ `no-underline` に修正
+
+### SSOT差異報告
+- 幅: SSOT=240px → w-60採用。既存 w-64(256px) から変更（layoutに影響する可能性あり）
+- クレジットバー色: SSOTは単色(primary-600)のみ。既存の3段階色変化ロジックは変更禁止のため維持
+- nav gap: SSOT=gap:2px → Tailwind gap-0.5(2px) で再現
+- getPlanColor: SSOT準拠でプレーンテキスト表示に変更のため import から削除
+
+### 変更ファイル
+- `frontend/components/core/sidebar/Sidebar.tsx`
+
+### 次のアクション
+- フェーズC-2: 診断一覧画面（app/dashboard/diagnoses/page.tsx）の置換
+- フェーズC-3: 一次情報フォーム画面
+- フェーズC-4: 診断結果画面
+
+---
+
+## Session 2026-06-26-C2（フェーズC-2）
+
+### 作業内容（予定）
+- フェーズC-2: 診断一覧画面（app/dashboard/diagnoses/page.tsx）表示層置換
+- 変更禁止: GET /diagnoses データ取得・フィルタロジック・スコア/ステータス判定条件・遷移先
+- SSOT確認済（フレーム01）:
+  - スコアフィールド: d.scores.ai_awareness（ScoreBadge に渡す）
+  - status実値: completed/running/failed/pending → StatusBadge キーと完全一致
+  - null処理: score != null && !isNaN(score) でガード、それ以外は「—」
+  - サイドバーオフセット: flexレイアウトのため ml-64 等なし → w-60 変更自動反映
+  - フィルタborder: #D9CFBC（トークンなし・ハードコード報告）
+
+### 作業結果
+
+#### DoD自己チェック
+- [x] ロジック変更なし（apiClient / filter / filtered / 遷移先 / status条件）
+- [x] getScoreColor 削除 → ScoreBadge に置換（SSOT準拠・機能的に同等）
+- [x] Table primitives (Table/Thead/Tbody/Tr/Th/Td) 使用
+- [x] ScoreBadge: null guard `status==='completed' && score!=null && !isNaN(score)`
+- [x] StatusBadge: `status={d.status}` — status実値(completed/running/failed/pending)と完全一致
+- [x] SSOT h1/sub/新規診断ボタン/フィルタチップ/アクションリンク 全て準拠
+
+#### SSOT差異
+- フィルタ inactive border: `#D9CFBC`（SSOT実値）— border-DEFAULT=#E5DDCE / border-strong=#D2C7B2 どちらとも不一致のためハードコード
+
+#### 変更ファイル
+- `frontend/app/dashboard/diagnoses/page.tsx`
+
+### 次のアクション
+- フェーズC-3: 診断新規作成画面（/dashboard/diagnoses/new）SSOT準拠置換
+- フェーズC-4: 診断結果画面 SSOT準拠置換
+- VPS デプロイ: v4-rebuild push → docker compose build web → restart
+
+---
+
+## Session 2026-06-26-C4（フェーズC-4）
+
+### 作業内容（予定）
+- フェーズC-4: 診断結果画面（app/dashboard/diagnoses/[id]/page.tsx）表示層置換
+- 変更禁止: running/pending進捗表示・3秒ポーリング・failed表示・再診断/レポートDLハンドラ
+- 今回 restyle するのは「completed 状態の結果表示」のみ
+- SSOT: フレーム03（総合AIスコア・GEO5原則・発見事項）
+
+### 作業結果
+
+#### DoD自己チェック
+
+**ロジック無改変の確認:**
+- [x] `useEffect` / 3秒ポーリング / `fetchAndPoll` — 一字一句変更なし
+- [x] `completed` で `refreshUser()` 停止、`running/pending` で再帰 setTimeout — 変更なし
+- [x] `failed` 状態のエラー表示・「再実行する」リンク — 変更なし
+- [x] `running/pending` 進捗表示（generating_keywords/querying_llms(n/8)/aggregating）— 変更なし
+- [x] `handleGenerateReport` 関数本体 — 変更なし（ヘッダボタンから呼び出し）
+- [x] `loading` / `!diagnosis` スケルトン・404 — 変更なし
+
+**SSOT準拠の確認:**
+- [x] 戻りリンク: `chevron_left 診断管理` / `text-[13px] font-medium text-ink-500 no-underline mb-[14px]`
+- [x] h1: `text-[24px] font-bold text-ink-900 tracking-[.01em]` → "診断結果"
+- [x] URL `text-[14px] font-medium text-ink-700` / 種別バッジ / 日付 `text-[12.5px] text-ink-400`
+- [x] 再診断ボタン: secondary スタイル (`bg-[#FDFBF5] border-border-strong`) + `refresh` アイコン
+- [x] レポート出力ボタン: primary スタイル (`bg-primary-600`) + `download` アイコン + `handleGenerateReport('detailed')`
+- [x] 総合AIスコア: `text-[64px] font-bold` + tier色ロジック (≥80 success / ≥50 warning / <50 danger)
+- [x] tier ラベルバッジ: bg/dot/text 全て tier ごとに分岐
+- [x] GEO5スコア: 4項目バー (`h-[7px] bg-border-divider`) + 値テキスト (tier色)
+- [x] 発見事項: severity → icon/color マッピング、高順ソート `.slice(0,5)`
+- [x] finding カテゴリバッジ: `bg-surface-hover border border-border rounded-sm`
+
+**STEP1報告との整合:**
+- [x] (a) `diagnosis.scores?.overall` 使用確認
+- [x] (b) 業界平均省略（データなし）
+- [x] (c) scoreItems 4項目をそのまま使用
+- [x] (d) severity `high/medium/low` → `error/warning/check_circle` + 色マッピング
+
+#### SSOT差異
+- 業界平均バー: SSOT は表示、実APIにデータなし → 省略
+- GEO5は4項目（SSOT は5項目テンプレート）
+- 再診断ボタン: 既存ハンドラなし → `router.push('/dashboard/diagnoses/new')`
+- レポート出力: 「詳細レポートPDF」のみ（`'detailed'`）。「簡易レポート」はSSOTにないため省略
+- recommendations セクション: SSOT フレーム03 に存在しないため完了状態では非表示
+- ハードコード: `/100` 色 `#B0A998` / tier mid テキスト `#9A7415` / tier high テキスト `#2E6B45` / finding desc `#6B665B`
+
+#### 変更ファイル
+- `frontend/app/dashboard/diagnoses/[id]/page.tsx`
+
+### 次のアクション
+- フェーズC-3: 診断新規作成画面（/dashboard/diagnoses/new）SSOT準拠置換
+- VPS デプロイ: v4-rebuild push → docker compose build web → restart
+
+---

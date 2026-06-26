@@ -5,7 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { formatDate, getScoreColor } from '@/lib/utils';
+import { formatDate } from '@/lib/utils';
+import { Card } from '@/components/ui/Card';
 import toast from 'react-hot-toast';
 
 interface DiagnosisScores {
@@ -59,6 +60,29 @@ interface Client {
   name: string;
   industry: string;
 }
+
+type Tier = 'high' | 'mid' | 'low';
+
+function getScoreTier(score: number): Tier {
+  if (score >= 80) return 'high';
+  if (score >= 50) return 'mid';
+  return 'low';
+}
+
+const TIER_CONFIG: Record<Tier, { color: string; bg: string; dotColor: string; textColor: string; label: string }> = {
+  high: { color: '#3F8C5C', bg: '#E6F1E7', dotColor: '#3F8C5C', textColor: '#2E6B45', label: '良好' },
+  mid:  { color: '#C28A1E', bg: '#FBF0D5', dotColor: '#C28A1E', textColor: '#9A7415', label: '改善の余地あり' },
+  low:  { color: '#CF4A41', bg: '#FBE7E3', dotColor: '#CF4A41', textColor: '#CF4A41', label: '要改善' },
+};
+
+const FINDING_CONFIG: Record<string, { icon: string; color: string }> = {
+  high:   { icon: 'error',        color: '#CF4A41' },
+  medium: { icon: 'warning',      color: '#C28A1E' },
+  low:    { icon: 'check_circle', color: '#3F8C5C' },
+};
+const FINDING_FALLBACK = { icon: 'info', color: '#837D6F' };
+
+const scoreColor = (val: number) => val >= 80 ? '#3F8C5C' : val >= 50 ? '#C28A1E' : '#CF4A41';
 
 export default function DiagnosisDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -119,12 +143,181 @@ export default function DiagnosisDetailPage() {
   const industry = client?.industry ?? '';
 
   const scoreItems = [
-    { label: 'AI認知度', value: diagnosis.scores?.ai_awareness },
+    { label: 'AI認知度',    value: diagnosis.scores?.ai_awareness },
     { label: 'ブランド認識', value: diagnosis.scores?.brand_recognition },
     { label: 'コンテンツ品質', value: diagnosis.scores?.content_quality },
     { label: '競合ギャップ', value: diagnosis.scores?.competitor_gap },
   ];
 
+  /* ===== completed 状態: SSOT フレーム03 レイアウト ===== */
+  if (diagnosis.status === 'completed') {
+    const overallScore = diagnosis.scores?.overall ?? 0;
+    const tier = getScoreTier(overallScore);
+    const tierCfg = TIER_CONFIG[tier];
+
+    const sortedFindings = [...diagnosis.findings]
+      .sort((a, b) => {
+        const ord: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        return (ord[a.severity] ?? 3) - (ord[b.severity] ?? 3);
+      })
+      .slice(0, 5);
+
+    return (
+      <div className="flex flex-col">
+        {/* Back link */}
+        <Link
+          href="/dashboard/diagnoses"
+          className="inline-flex items-center gap-[3px] text-[13px] font-medium text-ink-500 no-underline mb-[14px] hover:text-primary-600 transition-colors self-start"
+        >
+          <span className="material-symbols-outlined text-[18px] leading-none">chevron_left</span>
+          診断管理
+        </Link>
+
+        {/* Header row */}
+        <div className="flex justify-between items-start gap-4 mb-5">
+          <div>
+            <h1 className="m-0 text-[24px] font-bold text-ink-900 tracking-[.01em]">診断結果</h1>
+            <div className="flex items-center gap-[10px] mt-[7px] flex-wrap">
+              <span className="text-[14px] font-medium text-ink-700">{diagnosis.url}</span>
+              <span className="text-[11.5px] font-semibold text-ink-600 bg-surface-hover border border-border rounded-sm px-2 py-[2px]">
+                {diagnosis.type === 'detailed' ? '詳細診断' : 'シンプル診断'}
+              </span>
+              <span className="text-[12.5px] text-ink-400">{formatDate(diagnosis.created_at)} 実行</span>
+            </div>
+          </div>
+          <div className="flex gap-[10px] flex-shrink-0">
+            <button
+              onClick={() => router.push('/dashboard/diagnoses/new')}
+              className="inline-flex items-center justify-center gap-1.5 h-10 px-[16px] bg-[#FDFBF5] text-ink-800 border border-border-strong rounded text-[14px] font-semibold hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px] leading-none">refresh</span>
+              再診断
+            </button>
+            <button
+              onClick={() => handleGenerateReport('detailed')}
+              disabled={reportLoading}
+              className="inline-flex items-center justify-center gap-1.5 h-10 px-[18px] bg-primary-600 text-white border-none rounded text-[14px] font-semibold hover:bg-primary-700 transition-colors cursor-pointer disabled:bg-[#A9BBD8] disabled:cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[18px] leading-none">download</span>
+              {reportLoading ? '生成中...' : 'レポート出力'}
+            </button>
+          </div>
+        </div>
+
+        {/* Degraded warning — ロジック・コンテンツ無改変 */}
+        {diagnosis.degraded && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3 mb-[18px]">
+            <span className="text-amber-500 text-lg flex-shrink-0 mt-0.5">⚠</span>
+            <div>
+              <p className="text-sm font-medium text-amber-800">診断品質が低下しています</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                一部のAIモデルまたはWeb検索が利用できない状態で診断が実行されました。スコアは参考値としてご利用ください。管理者にお問い合わせください。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Score card: 総合AIスコア + GEO5原則スコア */}
+        <Card className="flex gap-[32px] px-[30px] py-[26px] mb-[18px]">
+          {/* Left: 総合AIスコア */}
+          <div className="min-w-[212px] border-r border-border-divider pr-[32px]">
+            <span className="text-[12px] font-semibold text-ink-500 tracking-[.02em]">総合AIスコア</span>
+            <div className="flex items-baseline gap-[5px] mt-2">
+              <span
+                className="text-[64px] font-bold leading-none tabular-nums"
+                style={{ color: tierCfg.color }}
+              >
+                {Math.round(overallScore)}
+              </span>
+              <span className="text-[20px] font-semibold" style={{ color: '#B0A998' }}>/100</span>
+            </div>
+            <span
+              className="inline-flex items-center gap-[5px] mt-3 px-[11px] py-1 rounded"
+              style={{ background: tierCfg.bg }}
+            >
+              <span className="w-[6px] h-[6px] rounded-full flex-shrink-0" style={{ background: tierCfg.dotColor }} />
+              <span className="text-[12.5px] font-semibold" style={{ color: tierCfg.textColor }}>
+                {tierCfg.label}
+              </span>
+            </span>
+          </div>
+
+          {/* Right: GEO5原則スコア (実データは4項目) */}
+          <div className="flex-1 min-w-0">
+            <span className="text-[12px] font-semibold text-ink-500 tracking-[.02em]">GEO5原則スコア</span>
+            <div className="mt-[14px] flex flex-col gap-[13px]">
+              {scoreItems.map((s) => {
+                const val = s.value ?? 0;
+                const color = scoreColor(val);
+                return (
+                  <div key={s.label} className="flex items-center gap-[14px]">
+                    <span className="w-[84px] text-[13px] font-medium text-ink-700 flex-none">{s.label}</span>
+                    <div className="flex-1 h-[7px] bg-border-divider rounded overflow-hidden">
+                      <div
+                        className="h-full rounded"
+                        style={{ width: `${Math.min(Math.round(val), 100)}%`, background: color }}
+                        role="progressbar"
+                        aria-valuenow={Math.round(val)}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      />
+                    </div>
+                    <span
+                      className="w-[46px] text-right text-[13px] font-bold tabular-nums flex-none"
+                      style={{ color }}
+                    >
+                      {Math.round(val)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+
+        {/* Findings */}
+        {diagnosis.findings.length > 0 && (
+          <Card className="px-[28px] pt-2 pb-5">
+            <div className="flex items-center justify-between pt-4 pb-1">
+              <span className="text-[15px] font-bold text-ink-900">発見事項</span>
+              <span className="text-[12px] font-medium text-ink-500">優先度の高い順に5件</span>
+            </div>
+            {sortedFindings.map((f, i) => {
+              const cfg = FINDING_CONFIG[f.severity] ?? FINDING_FALLBACK;
+              return (
+                <div key={i} className="flex items-start gap-[14px] py-[13px] border-b border-border-divider last:border-0">
+                  <span
+                    className="material-symbols-outlined flex-none"
+                    style={{ fontSize: '21px', lineHeight: '1.2', color: cfg.color }}
+                  >
+                    {cfg.icon}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-[9px]">
+                      <span className="text-[14px] font-semibold text-ink-800">{f.title}</span>
+                      {f.category && (
+                        <span className="text-[11px] font-semibold text-ink-500 bg-surface-hover border border-border rounded-sm px-[7px] py-[2px] flex-none">
+                          {f.category}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className="text-[13px] leading-[1.65] mt-[3px]"
+                      style={{ color: '#6B665B' }}
+                    >
+                      {f.description}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  /* ===== running / pending / failed 状態: 既存レイアウト無改変 ===== */
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-start justify-between">
@@ -140,7 +333,7 @@ export default function DiagnosisDetailPage() {
             {formatDate(diagnosis.created_at)}
           </p>
         </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-medium ${diagnosis.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : diagnosis.status === 'running' ? 'bg-primary-100 text-primary-700' : diagnosis.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
+        <span className={`px-3 py-1 rounded-full text-xs font-medium ${diagnosis.status === 'running' ? 'bg-primary-100 text-primary-700' : diagnosis.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
           {diagnosis.status === 'running' && <span className="animate-spin inline-block mr-1">⟳</span>}
           {{ completed: '完了', running: '診断中...', failed: 'エラー', pending: '待機中' }[diagnosis.status] ?? diagnosis.status}
         </span>
@@ -157,7 +350,7 @@ export default function DiagnosisDetailPage() {
             再実行する
           </Link>
         </div>
-      ) : diagnosis.status === 'running' || diagnosis.status === 'pending' ? (
+      ) : (
         <div className="bg-white rounded-xl border border-slate-200 p-10 text-center">
           <div className="w-12 h-12 border-4 border-primary-200 border-t-primary-500 rounded-full animate-spin mx-auto mb-4" />
           <p className="text-base font-medium text-slate-900">
@@ -183,106 +376,6 @@ export default function DiagnosisDetailPage() {
             </div>
           </div>
         </div>
-      ) : diagnosis.status === 'completed' && (
-        <>
-          {/* Degraded warning */}
-          {diagnosis.degraded && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
-              <span className="text-amber-500 text-lg flex-shrink-0 mt-0.5">⚠</span>
-              <div>
-                <p className="text-sm font-medium text-amber-800">診断品質が低下しています</p>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  一部のAIモデルまたはWeb検索が利用できない状態で診断が実行されました。スコアは参考値としてご利用ください。管理者にお問い合わせください。
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Scores */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {scoreItems.map((s) => {
-              const val = s.value ?? 0;
-              return (
-                <div key={s.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm text-center">
-                  <div className={`text-4xl font-bold mb-1 ${getScoreColor(val)}`}>{Math.round(val)}</div>
-                  <div className="text-xs text-body">{s.label}</div>
-                  <div className="mt-2 bg-slate-200 rounded-full h-1.5">
-                    <div
-                      className={`h-1.5 rounded-full ${val >= 80 ? 'bg-emerald-500' : val >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
-                      style={{ width: `${val}%` }}
-                      role="progressbar"
-                      aria-valuenow={val}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Overall score */}
-          {diagnosis.scores?.overall != null && (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex items-center gap-6">
-              <div className={`text-6xl font-bold ${getScoreColor(diagnosis.scores.overall)}`}>{Math.round(diagnosis.scores.overall)}</div>
-              <div>
-                <p className="text-sm font-medium text-slate-900">総合スコア</p>
-                <p className="text-xs text-body mt-0.5">100点満点中</p>
-              </div>
-            </div>
-          )}
-
-          {/* Findings */}
-          {diagnosis.findings.length > 0 && (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-              <h2 className="text-base font-semibold text-slate-900 mb-4">発見事項</h2>
-              <div className="space-y-3">
-                {diagnosis.findings.map((f, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <span className={`flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium ${f.severity === 'high' ? 'bg-red-100 text-red-700' : f.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
-                      {f.severity === 'high' ? '高' : f.severity === 'medium' ? '中' : '低'}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{f.title}</p>
-                      <p className="text-sm text-body mt-0.5">{f.description}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Recommendations */}
-          {diagnosis.recommendations.length > 0 && (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-              <h2 className="text-base font-semibold text-slate-900 mb-4">改善推奨事項</h2>
-              <ul className="space-y-2">
-                {diagnosis.recommendations.map((r, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-body">
-                    <span className="text-primary-500 mt-0.5 flex-shrink-0">→</span>
-                    <span>
-                      {r.action}
-                      {r.timeline && <span className="ml-2 text-xs text-slate-400">({r.timeline})</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Report actions */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-base font-semibold text-slate-900 mb-4">レポート生成</h2>
-            <div className="flex flex-wrap gap-3">
-              <button onClick={() => handleGenerateReport('simple')} disabled={reportLoading} className="inline-flex items-center justify-center gap-2 h-10 px-4 text-[1rem] font-medium bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-gray-50 cursor-pointer disabled:opacity-50">
-                簡易レポート（無料）
-              </button>
-              <button onClick={() => handleGenerateReport('detailed')} disabled={reportLoading} className="inline-flex items-center justify-center gap-2 h-10 px-4 text-[1rem] font-medium bg-primary-500 text-white rounded-lg hover:bg-primary-700 cursor-pointer disabled:opacity-50">
-                詳細レポートPDF
-              </button>
-            </div>
-          </div>
-        </>
       )}
     </div>
   );
