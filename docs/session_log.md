@@ -1913,3 +1913,14 @@ asyncio.run(reset())
 4. このメモを削除してよい
 
 ---
+
+## Session 2026-06-26
+
+### 作業内容（予定）
+- フェーズA: tailwind.config.ts にデザイントークン全設定
+  - primary色を旧青系(#2b70ef)→新ウォームネイビー(#45669B)に全置換
+  - ink/surface/border/success/warning/danger/score カラー追加
+  - fontSize/borderRadius/boxShadow 追加
+- フォント読込: Inter → Noto Sans JP（next/font/google）、Material Symbols Outlined（Google Fonts link）追加
+- globals.css: --font-sans更新・.text-body を ink-600 (#5E5A51) に統一
+

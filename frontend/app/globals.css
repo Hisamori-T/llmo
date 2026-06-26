@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --font-sans: 'Inter', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+  --font-sans: 'Noto Sans JP', sans-serif;
 }
 
 body {
@@ -11,5 +11,5 @@ body {
 }
 
 .text-body {
-  color: #3d4b5f;
+  color: #5E5A51;
 }
