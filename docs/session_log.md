@@ -1924,3 +1924,26 @@ asyncio.run(reset())
 - フォント読込: Inter → Noto Sans JP（next/font/google）、Material Symbols Outlined（Google Fonts link）追加
 - globals.css: --font-sans更新・.text-body を ink-600 (#5E5A51) に統一
 
+
+### 作業結果（フェーズA完了）
+- `tailwind.config.ts` — デザイントークン全設定完了
+  - primary色: 旧青系(#2b70ef) → ウォームネイビー(#45669B系)に置換
+  - ink/surface/border/success/warning/danger/score/fontSize/borderRadius/boxShadow 追加
+- `layout.tsx` — Noto Sans JP(next/font/google) + Material Symbols Outlined(Google Fonts link) 読込追加
+- `globals.css` — --font-sans更新、.text-body → ink-600(#5E5A51)に更新
+- VPS Docker build成功・起動確認・CSS検証:
+  - `#6b8ec7`(primary-500) / `#d5e2f1`(primary-100) / `#5e5a51`(ink-600) がコンパイルCSS内に確認
+  - Material Symbols Outlined link がHTMLhead末尾に出力
+  - Noto Sans JP woff2 preload がheadに出力
+
+### 変更ファイル
+- `frontend/tailwind.config.ts`
+- `frontend/app/layout.tsx`
+- `frontend/app/globals.css`
+
+### 次のアクション
+- フェーズB: 共通コンポーネント実装（Button → Input → Select → ScoreBadge → StatusBadge → Card → Table の順・1つずつ）
+  - 配置: `frontend/components/ui/`
+  - 既存ui/ディレクトリの有無を先に確認
+
+---
