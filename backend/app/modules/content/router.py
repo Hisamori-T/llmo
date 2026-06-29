@@ -5,14 +5,52 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.shared.api.deps import get_current_user
 from .schemas import (
-    AddSourceRequest, ArticleResponse, GenerateArticleRequest,
-    SourceResponse, UpdateArticleRequest,
+    AddSourceRequest, AiAssistRequest, AiAssistResponse,
+    ArticleResponse, GenerateArticleRequest, KeywordSuggestionsResponse,
+    SourceResponse, TemplatesResponse, UpdateArticleRequest,
 )
-from .services import ContentArticleService, ContentSourceService
+from .services import AiAssistService, ContentArticleService, ContentSourceService, KeywordSuggestionsService
+from .templates_data import TEMPLATES
 
 router = APIRouter(tags=['content'])
 _source_svc = ContentSourceService()
 _article_svc = ContentArticleService()
+_ai_assist_svc = AiAssistService()
+_kw_suggest_svc = KeywordSuggestionsService()
+
+
+# ── Templates endpoint (static — must precede any /{id} patterns) ─────────
+
+@router.get('/templates', response_model=TemplatesResponse)
+async def get_templates(
+    current_user = Depends(get_current_user),
+):
+    return TemplatesResponse(templates=TEMPLATES)
+
+
+@router.post('/ai-assist', response_model=AiAssistResponse)
+async def ai_assist(
+    body: AiAssistRequest,
+    current_user = Depends(get_current_user),
+):
+    result = await _ai_assist_svc.run(
+        mode=body.mode,
+        source_type=body.source_type,
+        text=body.text,
+        member_id=current_user.member_id,
+    )
+    return result
+
+
+@router.get('/keyword-suggestions', response_model=KeywordSuggestionsResponse)
+async def get_keyword_suggestions(
+    client_id: str = Query(...),
+    current_user = Depends(get_current_user),
+):
+    return await _kw_suggest_svc.get_suggestions(
+        client_id=client_id,
+        agency_id=current_user.agency_id,
+    )
 
 
 # ── Source endpoints ──────────────────────────────────────────────────────
@@ -82,6 +120,7 @@ async def generate_article(
             agency_id=current_user.agency_id,
             member_id=current_user.member_id,
             target_keyword=body.target_keyword,
+            target_keywords=body.target_keywords,
             source_ids=body.source_ids,
             diagnosis_id=body.diagnosis_id,
         )

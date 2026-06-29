@@ -2260,3 +2260,363 @@ asyncio.run(reset())
 - フェーズC-fix: ページ背景 #F6F1E7 の適用漏れ修正
 - 変更禁止: コンポーネントのロジック・構造
 - SSOT確定: 背景#F6F1E7 / カード#FDFBF5 / サブ#F1EADC
+
+### 作業結果
+
+#### STEP1 現物確認
+- (a) `globals.css` body: background 指定なし（font-family のみ）→ 問題なし
+- (b) `dashboard/layout.tsx`: `bg-gray-50` が残存 → **白背景の原因**
+- (c) tailwind.config `surface.app = '#F6F1E7'` 存在 → 追加不要
+
+#### STEP2 適用内容
+- `frontend/app/dashboard/layout.tsx` ルート div: `bg-gray-50` → `bg-surface-app`
+- 適用層: dashboard レイアウト（認証画面に影響しない）
+- 変更箇所: 1か所のみ
+
+#### DoD自己チェック
+- [x] dashboard 配下全体が bg-surface-app (#F6F1E7) 乳白色基調になった
+- [x] Card (`bg-[#FDFBF5]`) が背景から正しく浮く
+- [x] Sidebar の `bg-[#FDFBF5]` / surface-subtle / クレジットブロック — 構造変更なし
+- [x] 認証画面 (/auth/*) は別 layout → 未影響
+- [x] ロジック・構造変更なし（1クラス変更のみ）
+- [x] VPS デプロイ完了 (d9a527e)
+
+#### 変更ファイル
+- `frontend/app/dashboard/layout.tsx`
+
+### 次のアクション
+- フェーズC-3: 診断新規作成画面（/dashboard/diagnoses/new）SSOT準拠置換
+- スモークテスト: llmo.fact-ally.com でダッシュボード背景が #F6F1E7 になっていること確認
+
+---
+
+## Session 2026-06-26-D0（content拡張 D-0 現状分析）
+
+### 作業内容（予定）
+- D-0: 現状分析のみ（コード変更なし）
+- 参照: DESIGN-content-primary-info-and-keyword-v1.md / DESIGN-keyword-scores-api-v1.md
+- 調査項目: (a)content_sources スキーマ (b)content_articles/POST契約 (c)記事生成画面
+  (d)GET/POST /keywords/suggest (e)GEO5原則SSOT定義 (f)content router パス順
+
+### 作業結果
+
+#### (a) content_sources テーブル実スキーマ（0001 + 0003 確定）
+```
+id           STRING(36) PK
+source_id    STRING(36) nullable  ← 0003追加（アプリ側主キー）
+client_id / agency_id / member_id STRING(36)
+type         STRING(50)  ← 'interview'|'doc'|'url'  ★設計書の source_type は誤記（DBカラム変更不要）
+title        STRING(500)
+body         TEXT
+source_url   STRING(500)
+created_at   STRING(64)
+```
+
+#### (b) content_articles スキーマ + POST契約
+DB（0001 + 0003）:
+```
+id / article_id（0003追加） / client_id / agency_id / member_id
+diagnosis_id STRING(36) nullable  ← 0003追加
+target_keyword STRING(255)        ← 単数string。list不在
+title STRING(500) nullable         ← 0003追加
+outline JSONB / body_markdown TEXT / geo_checklist JSONB / source_ids JSONB
+status STRING(50) default='draft' / credits_used INT default=8
+created_at / updated_at STRING(64)
+```
+POST /contents/articles 現行リクエスト: `{ client_id, target_keyword(str), source_ids[], diagnosis_id?(str) }`
+⚠️ `target_keywords`(list)はDBにもAPIにも未存在 → D-5で後方互換追加
+
+#### (c) フロントエンドパス確認
+- sources/new: クライアント選択＋type 3択カード(interview/doc/url)＋title＋body textarea＋source_url(url種別のみ)。✨ボタン・AI補助なし
+- articles/new: クライアント選択＋`<input type="text">` target_keyword(単数)＋diagnosis_id任意テキスト＋source checkboxes。✨ボタンなし
+
+#### (d) /keywords/suggest 契約
+- Request: `{ company_name, industry, location? }`
+- Response: `list[str]`（スコアなし）
+- diagnosis_id を受け付けない → ②のフォールバック専用として設計書通り使用
+
+#### (e) GEO5原則 SSOT正式定義
+SSOT（LLMO-Score-COMPLETE-FINAL-v4.md L478）に5項目キーワード確認:
+「引用・数値・統計・権威性・簡潔な結論」（詳細説明は未記載）
+services.py `_ARTICLE_PROMPT` の5定義が実装上の唯一の詳細出典:
+1. 【引用可能性】AIが直接引用できる具体的な文章
+2. 【数値】定量データを最低3箇所
+3. 【統計/調査】業界統計または調査結果を1箇所以上
+4. 【権威性】専門資格・受賞歴・施工実績・年数・メディア掲載など
+5. 【簡潔な結論】各セクション末または記事末に、AIが引用しやすい1〜2文
+→ geo5.py への転記はこの5定義を使用（SSOTと整合）
+
+#### (f) routeパス順序
+GET /diagnoses/keyword-scores: diagnosis/router.py:158 に**実装済み**（`/{diagnosis_id}` より前に定義済み）
+content側: GET /contents/keyword-suggestions / POST /contents/ai-assist / GET /contents/templates
+いずれも既存の /sources/{id} / /articles/{id} と別prefix → 衝突リスク低。静的パスを先頭に配置で対応
+
+#### 不整合まとめ
+| 項目 | 設計書記載 | 実コード | 対応 |
+|------|-----------|----------|------|
+| content_sources カラム名 | source_type | type | DBカラム変更不要（設計書の誤記） |
+| 記事生成KW | target_keywords(list) | target_keyword(str) | D-5で後方互換追加 |
+| 記事生成課金タイミング | 変更なし（既存） | 事前課金（変更しない） | D-2のai-assistのみ成功後課金で新規実装 |
+| /diagnoses/keyword-scores | 「設計済み」 | 実装済み | D-4で呼ぶだけ |
+
+### 次のアクション
+- D-0 報告をユーザーに提示 → 承認後 D-1（content/geo5.py + templates_data + GET /contents/templates）着手
+- D-1以降は設計書§13の順序通り（D-1→D-2→D-3→D-4→D-5）
+
+---
+
+## Session 2026-06-26-D1（content基盤 D-1）
+
+### 作業内容（予定）
+- D-1: content モジュール基盤実装（コード変更はcontentモジュールのみ）
+- 作成ファイル:
+  - `backend/app/modules/content/geo5.py` — GEO5原則の唯一定義
+  - `backend/app/modules/content/templates_data.py` — 種別雛形データ
+  - `backend/app/modules/content/router.py` 既存に GET /contents/templates 追加
+  - `backend/app/modules/content/schemas.py` 既存に TemplatesResponse スキーマ追加
+- 既存 services.py _ARTICLE_PROMPT / DB / 記事生成ロジックには触れない
+
+### 作業結果
+
+#### 作成ファイル
+- `backend/app/modules/content/geo5.py` — GEO5原則の唯一定義（5原則 × key/name/content/guiding_question/check）
+- `backend/app/modules/content/templates_data.py` — 種別雛形データ（interview/doc/url）
+
+#### 変更ファイル
+- `backend/app/modules/content/schemas.py` — TemplateEntry + TemplatesResponse 追加
+- `backend/app/modules/content/router.py` — GET /contents/templates 追加（静的パスを先頭に配置）
+
+#### DoD 自己チェック
+- [x] geo5.py が §3.3 の5項目（key/name/content/guiding_question/check）で実装
+- [x] services.py _ARTICLE_PROMPT との齟齬なし（5原則の内容・順序・用語が一致）
+  - 唯一の命名差: schemas.py GeoChecklist は `citations/conclusions`（複数形）、geo5.py は `citation/conclusion`（単数形）。これはDB/チェックリスト側とテンプレート定義の責務分離であり矛盾ではない（D-5で統合予定）
+- [x] templates_data が3種別（interview/doc/url）を保持
+- [x] interview scaffold が5項目・geo5キーに紐付く
+- [x] doc scaffold が [要点/根拠データ/結論] の3見出し
+- [x] url は needs_body_scaffold=False・scaffold=None
+- [x] GET /contents/templates が TemplatesResponse（3種別）を返す
+- [x] 認証 get_current_user 付き・課金なし・副作用なし
+- [x] route順序: /templates を /sources・/articles の前に配置
+- [x] DB変更なし
+- [x] 記事生成（_ARTICLE_PROMPT）無改変
+- [x] Python syntax/logic チェック PASSED
+
+#### 次のアクション
+- D-2: POST /contents/ai-assist（gap_check / structure）— shared/llm 利用・成功後課金 1cr・operation名 content_ai_assist
+
+---
+
+## Session 2026-06-26-D2（content AI補助 D-2）
+
+### 作業内容（予定）
+- D-2: POST /contents/ai-assist 実装（gap_check / structure 2モード）
+- geo5.py を唯一の出典としてプロンプト生成、_ARTICLE_PROMPT は無改変
+- 課金: 成功後1cr・失敗時未課金・不足時402（check_and_deduct 流用）
+- 変更対象: content モジュールのみ（schemas.py / services.py / router.py）
+
+### 作業結果
+
+#### 変更ファイル
+- `backend/app/shared/constants/plans.py` — `content_ai_assist: 1` を CREDIT_COSTS に追加（check_and_deduct が要求する operation キー）
+- `backend/app/modules/content/schemas.py` — GapCheckMissingItem / AiAssistRequest / AiAssistResponse 追加
+- `backend/app/modules/content/services.py` — AiAssistService クラス追加（geo5/templates_data import, logger追加）
+- `backend/app/modules/content/router.py` — POST /contents/ai-assist 追加（/templates の直後・/sources の前）
+
+#### DoD 自己チェック
+- [x] gap_check が5観点で不足を返す（geo5.py の p.check を参照・厳密JSON・parse安全）
+- [x] 不足なし時 missing: []（LLM出力に委ねる、LLMへの指示に明記）
+- [x] structure が source_type 別の構造で整形を返す
+  - interview → Q&A形式（geo5.guiding_question 5問を元に）
+  - doc → 要点/根拠データ/結論（templates_data['doc'].scaffold から参照）
+- [x] プロンプトが geo5.py 参照（GEO5_PRINCIPLES ループ）。ai_assist 内に5原則の再定義なし
+- [x] 成功時のみ1cr引き落とし（L397 _extract_json → L411 check_and_deduct の順序確認済み）
+- [x] LLM失敗（resp.ok=False）→ 502・課金なし
+- [x] JSON parse失敗（_extract_json=None）→ 502・課金なし
+- [x] mode別必須キー欠落→ 502・課金なし
+- [x] 残量不足 → 402（LLM呼び出し前に手動チェック）
+- [x] _ARTICLE_PROMPT / 記事生成 無改変
+- [x] DB変更なし
+- [x] route順序: /ai-assist=L30、/sources/{source_id}=L77（静的パスが先）
+- [x] Python syntax PASSED（plans/schemas/services/router 全ファイル）
+- [x] Gemini単体（ask_single model='gemini'）。多LLM不使用
+
+#### 注記
+- plans.py は厳密には content モジュール外だが、check_and_deduct が operation キーを CREDIT_COSTS で参照するため必須の追加（ValueError回避）
+
+#### 次のアクション
+- D-3: /dashboard/contents/sources/new をフレーム02準拠でrebuild（Card/Select/Input/Button + 種別雛形注入 + AI補助2ボタン）
+
+---
+
+## Session 2026-06-26-D3（①一次情報UI rebuild D-3）
+
+### 作業内容（予定）
+- D-3: /dashboard/contents/sources/new を rebuild
+- フレーム02準拠UI（Card/Select/Input/Button primitives）
+- 種別雛形注入（GET /contents/templates、既入力時上書き確認）
+- AI補助2箇所（POST /contents/ai-assist gap_check/structure）
+- 保存契約・バリデーション・遷移は無改変
+
+### 作業結果
+
+#### STEP1 現物確認
+- 保存契約: `POST /contents/sources { client_id, type, sourceType, title, body, source_url }` → 成功後 `router.push('/dashboard/contents?tab=sources')`
+- バリデーション: `!clientId` / `!title.trim()` → setFormError
+- url種別のみ source_url フィールド表示、body は常に表示（ラベルが変わる）
+- 既存: 全て `bg-white` / `border-slate-200` / `text-slate-*` のネイティブ配色
+
+#### 作成ファイル
+- `frontend/components/ui/Textarea.tsx` — Inputと同じトークンスタイル（新設）
+
+#### 変更ファイル
+- `frontend/app/dashboard/contents/sources/new/page.tsx` — 全面 rebuild
+
+#### DoD 自己チェック
+- [x] 保存契約無改変: `POST /contents/sources { client_id, type, title, body, source_url }` / 成功後 `/dashboard/contents?tab=sources` / バリデーション同一
+- [x] Card primitive（#FDFBF5）でフォーム外枠
+- [x] Select primitive でクライアント選択
+- [x] Input primitive でタイトル・source_url（必須マーク `text-danger`）
+- [x] **Textarea.tsx を新設**（Inputと同じトークン: bg-[#FDFBF5] / border-border-strong / focus:border-primary-600 / resize-y）
+- [x] Button Primary で送信 / Button Secondary でキャンセル
+- [x] 種別カード: 選択中 `bg-primary-50 border-primary-600` / 未選択 `bg-[#FDFBF5] border-border`
+- [x] ネイティブ白配色（slate/white）を全てトークンに置換
+- [x] GET /contents/templates 取得・種別変更時に雛形プリフィル（interview→Q&A / doc→見出し）
+- [x] 初回ロード時に body が空なら scaffold を自動適用
+- [x] 既入力時の種別変更で `window.confirm()` 上書き確認
+- [x] url 種別は scaffold なし・source_url フィールド表示（既存挙動維持）
+- [x] gap_check / structure ボタン（url以外のみ表示）
+- [x] 成功後 `refreshUser()` でクレジットゲージ更新
+- [x] 402 → toast「クレジットが不足しています」/ LLM失敗 → toast「AI補助に失敗しました」
+- [x] structure プレビュー → 「反映」で本文置換 / 「キャンセル」で破棄
+
+#### Textarea の実装方法
+`components/ui/Textarea.tsx` を新設。Input.tsx と同じデザイントークンスタイル（bg-[#FDFBF5] / border-border-strong / focus:border-primary-600 / resize-y / TextareaHTMLAttributes を継承）。
+
+#### 次のアクション
+- D-4: GET /contents/keyword-suggestions API（diagnosis API経由→整形→フォールバック）
+- D-5: 記事生成UI の ✨ボタン + 候補チップ + target_keywords 後方互換
+
+---
+
+## Session 2026-06-26-D4（②keyword-suggestions API D-4）
+
+### 作業内容（予定）
+- D-4: GET /contents/keyword-suggestions 実装
+- diagnosis service関数 in-process 呼び出し（DB直参照禁止）
+- scores非空: 昇順・weak<80・label整形 / scores空: フォールバック分岐
+- 変更対象: content モジュールのみ
+
+### 作業結果
+- `backend/app/modules/content/services.py` に `KeywordSuggestionsService` クラスを追加
+  - `get_suggestions(client_id, agency_id)` 実装: diagnosis スコア優先 → フォールバック
+  - 診断スコア有: `_DiagnosisSvc.get_keyword_scores()` in-process 呼び出し、昇順整形、weak < 80
+  - フォールバック: `_ClientSvc.get()` → `_suggest_keywords()` で候補生成（課金なし確認済み）
+  - `requires_generation: False` 固定（`suggest_keywords` が無課金のため）
+- `backend/app/modules/content/router.py` に `GET /keyword-suggestions` エンドポイント追加
+  - `Query(...)` で `client_id` 必須、`current_user.agency_id` で agency_id 取得
+  - 配置: `/ai-assist` の直後、`/sources` より前（FastAPI 静的パス優先ルール準拠）
+- `KeywordSuggestionsService` + `KeywordSuggestionsResponse` を router の import に追加
+- 全D-4アサーション通過確認済み
+
+### 変更ファイル
+- `backend/app/modules/content/services.py`（KeywordSuggestionsService 追加 + in-process imports）
+- `backend/app/modules/content/router.py`（GET /keyword-suggestions 追加 + import更新）
+- `backend/app/modules/content/schemas.py`（前セッションで追加済み: KeywordCandidate + KeywordSuggestionsResponse）
+
+### 次のアクション
+- D-5: 記事生成UI `/dashboard/contents/articles/new` の ✨ボタン + 候補チップ + target_keywords 後方互換
+  - `GET /contents/keyword-suggestions` を叩き候補チップ表示（診断あり: score+弱ラベル、診断なし: fallbackノート）
+  - `POST /contents/articles` ペイロードは `target_keyword: str` のまま後方互換維持
+  - キャンセルは既存ページに戻るルートを維持
+
+---
+
+## Session 2026-06-29-D5（content①②締め — ✨UI＋GEO5集約）
+
+### 作業内容（予定）
+- D-5 STEP2: articles/new に ✨ボタン＋候補チップ（追加/削除/編集/手動入力ハイブリッド）
+- D-5 STEP3: POST /contents/articles を target_keywords(list) 後方互換対応（スキーマ + サービス）
+- D-5 STEP4: _ARTICLE_PROMPT の GEO5 インライン定義を geo5.py 参照に置換（プロンプト出力不変が絶対条件）
+- 変更対象: content モジュールのみ（DB スキーマ変更なし）
+
+### 作業結果
+
+#### STEP1 現物確認
+| 確認項目 | 結果 |
+|---|---|
+| articles/new KW入力 | 単数 input (`targetKeyword: string`)、primitive 未移行 |
+| POST 現行契約 | `{ client_id, target_keyword: str, source_ids, diagnosis_id? }` ／事前課金8cr |
+| GEO5 diff確認 | **1件のdiff発見**: `statistics.name='統計・調査'`(geo5.py 中点) vs `【統計/調査】`(_ARTICLE_PROMPT スラッシュ)。他4原則は完全一致 |
+
+#### STEP2 ✨ボタン＋候補チップ（FE）— 完了
+- `frontend/app/dashboard/contents/articles/new/page.tsx` を full rebuild（primitives移行 + ✨追加）
+- Button/Card/Input/Select primitives に移行（slate/white 完全除去）
+- ターゲットKW欄: selectedKeywords(string[]) チップ + 手動Input + 追加ボタン + ✨ AIで自動生成
+- ✨ → `GET /contents/keyword-suggestions?client_id=...` → 候補チップ表示
+  - source=diagnosis: weak チップ（bg-warning-bg・要強化）/ 通常チップ（bg-surface-subtle）
+  - source=fallback: 「診断未実施のため業種・エリアから生成しました」注記 + 通常チップ
+- 候補チップ追加・削除・編集（手動入力 Enter or 追加ボタン）ハイブリッド
+
+#### STEP3 target_keyword 後方互換（API）— 完了
+- `schemas.py`: `target_keyword: str = ''` (後方互換) + `target_keywords: Optional[list[str]] = None`
+- `services.py`: `generate()` に `target_keywords` 追加。複数時: primary_keyword=先頭(DB保存) / keyword_for_prompt=全件join(プロンプト)。単数時: 従来通り。事前課金8cr 無改変
+- `router.py`: `target_keywords=body.target_keywords` を generate() へ渡す
+- FE: `target_keyword: allKeywords[0]` (後方互換) + `target_keywords: allKeywords` 両方送信
+
+#### STEP4 GEO5集約 — 未実施（鉄則に従い差分報告）
+- **diff確認**: `statistics.name='統計・調査'`(geo5.py) vs `【統計/調査】`(_ARTICLE_PROMPT) — 中点(・)とスラッシュ(/)の相違
+- 「diffゼロ」条件を満たさないため集約を実施せず停止
+- **修正案**: geo5.py の `statistics.name` を `'統計・調査'` → `'統計/調査'` に修正すれば diffゼロになる
+  (AiAssistService の gap_check プロンプトでも同じ名前が表示されるが、機能的には無影響)
+- ユーザー判断を待ってから D-5.5 として集約を実施
+
+#### キー命名整合（確認）
+- geo5.py key: `citation/numbers/statistics/authority/conclusion`（単数形）
+- GeoChecklist DB: `citations/numbers/statistics/authority/conclusions`（複数形）
+- 今回の変更で整合を崩す修正はなし。D-5.5 集約時に明示マッピングで対応
+
+### 変更ファイル
+- `backend/app/modules/content/schemas.py`（GenerateArticleRequest に target_keywords 追加）
+- `backend/app/modules/content/services.py`（generate() target_keywords 後方互換対応）
+- `backend/app/modules/content/router.py`（target_keywords をサービスへ受け渡し）
+- `frontend/app/dashboard/contents/articles/new/page.tsx`（full rebuild: primitives + ✨ + chips）
+
+### 次のアクション
+- D-5.5 GEO5集約（保留中): geo5.py `statistics.name='統計・調査'` → `'統計/調査'` 修正後に集約実施
+  → ユーザー承認後に1変更で実施
+- Phase C-3: `/dashboard/diagnoses/new` SSOT redesign（D-series とは別シリーズ）
+
+---
+
+## Session 2026-06-29-D5.5（GEO5集約 — _ARTICLE_PROMPT を geo5.py 参照へ）
+
+### 作業内容（予定）
+- STEP1: geo5.py の statistics.name を '統計・調査'（中点）→ '統計/調査'（スラッシュ）に修正
+  （設計書§3.3・_ARTICLE_PROMPT 双方がスラッシュのため geo5.py が逸脱していた）
+- STEP2: _ARTICLE_PROMPT の GEO5 5原則インライン定義を geo5.py 参照に置換
+  （byte一致検証が必須条件。diffがあれば未実施）
+- 変更対象: geo5.py と services.py の _ARTICLE_PROMPT 定義のみ
+
+### 作業結果
+
+#### STEP1（geo5.py 修正）— 完了
+- `statistics.name` を `'統計・調査'`（中点）→ `'統計/調査'`（スラッシュ）に修正
+- 根拠: 設計書§3.3 + _ARTICLE_PROMPT 双方がスラッシュのため geo5.py が逸脱していた
+- core diff検証（GEO5セクションのみ）: **BYTE-IDENTICAL** ✅
+
+#### STEP2（services.py _ARTICLE_PROMPT 集約）— 完了
+- `_ARTICLE_PROMPT` の GEO5 5原則インライン定義を削除
+- `_GEO5_SECTION` + `_ARTICLE_PROMPT_SUFFIX` + `_ARTICLE_PROMPT` 3変数に分割
+- サフィックス部は triple-quoted string のまま保持（エスケープ問題回避）
+- フル検証: `python verify_prompt.py` → **BYTE-IDENTICAL** (913 chars / 1791 bytes) ✅
+- AST構造チェック: parse OK / _GEO5_SECTION定義 / GEO5_PRINCIPLES import / _check_geo存在 / _GEO5_SECTION builder 全PASS ✅
+- 二重定義解消: GEO5原則は geo5.py が唯一の出典となった
+
+### 変更ファイル
+- `backend/app/modules/content/geo5.py`（statistics.name 修正）
+- `backend/app/modules/content/services.py`（_ARTICLE_PROMPT → _GEO5_SECTION+_ARTICLE_PROMPT_SUFFIX+_ARTICLE_PROMPT に分割）
+
+### 次のアクション
+- デプロイ（build web + スモーク）→ VPS 116.80.96.175
+
+---

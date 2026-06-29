@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 
 interface Client {
   client_id: string;
@@ -12,25 +19,70 @@ interface Client {
 
 type SourceType = 'interview' | 'doc' | 'url';
 
+interface ScaffoldItem {
+  geo_key?: string;
+  question?: string;
+  hint?: string;
+  heading?: string;
+}
+
+interface TemplateEntry {
+  source_type: string;
+  label: string;
+  needs_body_scaffold: boolean;
+  scaffold: ScaffoldItem[] | null;
+}
+
+interface GapItem {
+  geo_key: string;
+  message: string;
+}
+
 const TYPE_OPTIONS: { value: SourceType; label: string; description: string }[] = [
   { value: 'interview', label: 'インタビュー', description: '社員・顧客へのインタビュー内容' },
   { value: 'doc',       label: 'ドキュメント', description: '社内文書・マニュアル・ホワイトペーパー' },
   { value: 'url',       label: 'URL',          description: '参照したいWebページのURL' },
 ];
 
+function buildScaffoldText(tmpl: TemplateEntry): string {
+  if (!tmpl.needs_body_scaffold || !tmpl.scaffold) return '';
+  if (tmpl.source_type === 'interview') {
+    return tmpl.scaffold
+      .filter((s) => s.question)
+      .map((s, i) => `Q${i + 1}. ${s.question}\nA. `)
+      .join('\n\n');
+  }
+  // doc: heading structure
+  return tmpl.scaffold
+    .filter((s) => s.heading)
+    .map((s) => `## ${s.heading}\n`)
+    .join('\n');
+}
+
 export default function NewSourcePage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
+
   const [clients, setClients] = useState<Client[]>([]);
   const [loadingClients, setLoadingClients] = useState(true);
+  const [templates, setTemplates] = useState<Record<string, TemplateEntry>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
+  // フォーム値（保存契約に対応するフィールドのみ）
   const [clientId, setClientId] = useState('');
   const [sourceType, setSourceType] = useState<SourceType>('interview');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
 
+  // AI補助
+  const [checkingGap, setCheckingGap] = useState(false);
+  const [gapResults, setGapResults] = useState<GapItem[] | null>(null);
+  const [structuring, setStructuring] = useState(false);
+  const [structurePreview, setStructurePreview] = useState<string | null>(null);
+
+  // クライアント一覧 + テンプレート一覧を同時取得
   useEffect(() => {
     apiClient.get('/clients')
       .then((res) => {
@@ -40,15 +92,96 @@ export default function NewSourcePage() {
       })
       .catch(() => {})
       .finally(() => setLoadingClients(false));
+
+    apiClient.get('/contents/templates')
+      .then((res) => setTemplates(res.data?.templates ?? {}))
+      .catch(() => {});
   }, []);
 
+  // テンプレート初回ロード時に本文が空なら雛形をプリフィル
+  useEffect(() => {
+    if (Object.keys(templates).length === 0) return;
+    if (body !== '') return;
+    const tmpl = templates[sourceType];
+    if (tmpl?.needs_body_scaffold) {
+      setBody(buildScaffoldText(tmpl));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates]);
+
+  // 種別変更（既入力があれば上書き確認）
+  function handleTypeChange(newType: SourceType) {
+    if (newType === sourceType) return;
+    if (body.trim()) {
+      if (!window.confirm('本文が上書きされます。続けますか？')) return;
+    }
+    setSourceType(newType);
+    setGapResults(null);
+    setStructurePreview(null);
+    const tmpl = templates[newType];
+    if (tmpl?.needs_body_scaffold) {
+      setBody(buildScaffoldText(tmpl));
+    } else {
+      setBody('');
+    }
+  }
+
+  // AI補助: 不足チェック
+  async function handleGapCheck() {
+    if (!body.trim() || sourceType === 'url') return;
+    setCheckingGap(true);
+    setGapResults(null);
+    try {
+      const res = await apiClient.post('/contents/ai-assist', {
+        mode: 'gap_check',
+        source_type: sourceType,
+        text: body,
+      });
+      setGapResults(res.data.missing ?? []);
+      await refreshUser();
+    } catch (e: any) {
+      if (e?.response?.status === 402) {
+        toast.error('クレジットが不足しています');
+      } else {
+        toast.error('AI補助に失敗しました');
+      }
+    } finally {
+      setCheckingGap(false);
+    }
+  }
+
+  // AI補助: 整形
+  async function handleStructure() {
+    if (!body.trim() || sourceType === 'url') return;
+    setStructuring(true);
+    setStructurePreview(null);
+    try {
+      const res = await apiClient.post('/contents/ai-assist', {
+        mode: 'structure',
+        source_type: sourceType,
+        text: body,
+      });
+      setStructurePreview(res.data.structured_text ?? '');
+      await refreshUser();
+    } catch (e: any) {
+      if (e?.response?.status === 402) {
+        toast.error('クレジットが不足しています');
+      } else {
+        toast.error('AI補助に失敗しました');
+      }
+    } finally {
+      setStructuring(false);
+    }
+  }
+
+  // 送信（保存契約・バリデーション・遷移は無改変）
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!clientId) { setError('クライアントを選択してください'); return; }
-    if (!title.trim()) { setError('タイトルを入力してください'); return; }
+    if (!clientId) { setFormError('クライアントを選択してください'); return; }
+    if (!title.trim()) { setFormError('タイトルを入力してください'); return; }
 
     setSubmitting(true);
-    setError(null);
+    setFormError(null);
     try {
       await apiClient.post('/contents/sources', {
         client_id: clientId,
@@ -59,144 +192,230 @@ export default function NewSourcePage() {
       });
       router.push('/dashboard/contents?tab=sources');
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? '一次情報の登録に失敗しました');
+      setFormError(e?.response?.data?.detail ?? '一次情報の登録に失敗しました');
       setSubmitting(false);
     }
   }
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard/contents" className="inline-flex items-center gap-1 text-sm text-body hover:text-slate-900">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-          </svg>
-          コンテンツ一覧
-        </Link>
-      </div>
+      {/* 戻りリンク */}
+      <Link
+        href="/dashboard/contents"
+        className="inline-flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-800 no-underline"
+      >
+        <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+        コンテンツ一覧
+      </Link>
 
+      {/* ページタイトル */}
       <div>
-        <h1 className="text-3xl font-bold text-slate-900">一次情報を追加</h1>
-        <p className="text-sm text-body mt-1">記事生成の根拠となる情報を登録します</p>
+        <h1 className="text-[22px] font-bold text-ink-800 leading-tight">一次情報を追加</h1>
+        <p className="text-[13px] text-ink-400 mt-1">記事生成の根拠となる情報を登録します</p>
       </div>
 
-      {error && (
-        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
-          <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-          </svg>
-          {error}
+      {/* フォームエラー */}
+      {formError && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-danger-bg border border-danger rounded text-[13px] text-danger">
+          <span className="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0">error</span>
+          {formError}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-        {/* クライアント */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700" htmlFor="client">クライアント</label>
-          {loadingClients ? (
-            <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
-          ) : (
-            <select
-              id="client"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              required
-              className="w-full h-10 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              {clients.length === 0 && <option value="">クライアントがいません</option>}
-              {clients.map((c) => (
-                <option key={c.client_id} value={c.client_id}>{c.name}</option>
-              ))}
-            </select>
-          )}
-        </div>
+      <form onSubmit={handleSubmit}>
+        <Card className="p-6 space-y-6">
 
-        {/* 種別 */}
-        <div className="space-y-2">
-          <span className="text-sm font-medium text-slate-700">情報の種別</span>
-          <div className="grid grid-cols-3 gap-3">
-            {TYPE_OPTIONS.map(({ value, label, description }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setSourceType(value)}
-                className={`flex flex-col items-start p-3 rounded-lg border text-left transition-colors cursor-pointer ${sourceType === value ? 'border-primary-500 bg-primary-50' : 'border-slate-200 hover:bg-gray-50'}`}
-              >
-                <span className={`text-sm font-medium ${sourceType === value ? 'text-primary-500' : 'text-slate-900'}`}>{label}</span>
-                <span className="text-xs text-body mt-0.5">{description}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* タイトル */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700" htmlFor="title">タイトル <span className="text-red-500">*</span></label>
-          <input
-            id="title"
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="例：代表インタビュー 2026年1月"
-            required
-            className="w-full h-10 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-          />
-        </div>
-
-        {/* URL（url 種別のみ） */}
-        {sourceType === 'url' && (
+          {/* クライアント */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700" htmlFor="source-url">URL</label>
-            <input
-              id="source-url"
-              type="url"
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://example.com/article"
-              className="w-full h-10 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+            <label className="text-[13px] font-semibold text-ink-600" htmlFor="client">
+              クライアント
+            </label>
+            {loadingClients ? (
+              <div className="h-10 bg-surface-subtle rounded animate-pulse" />
+            ) : (
+              <Select
+                id="client"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                required
+              >
+                {clients.length === 0 && <option value="">クライアントがいません</option>}
+                {clients.map((c) => (
+                  <option key={c.client_id} value={c.client_id}>{c.name}</option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          {/* 種別カード */}
+          <div className="space-y-2">
+            <span className="text-[13px] font-semibold text-ink-600">情報の種別</span>
+            <div className="grid grid-cols-3 gap-3">
+              {TYPE_OPTIONS.map(({ value, label, description }) => {
+                const active = sourceType === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handleTypeChange(value)}
+                    className={`flex flex-col items-start p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-primary-50 border-primary-600'
+                        : 'bg-[#FDFBF5] border-border hover:bg-surface-hover'
+                    }`}
+                  >
+                    <span className={`text-[13px] font-semibold ${active ? 'text-primary-700' : 'text-ink-700'}`}>
+                      {label}
+                    </span>
+                    <span className="text-[12px] text-ink-400 mt-0.5">{description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* タイトル */}
+          <div className="space-y-1.5">
+            <label className="text-[13px] font-semibold text-ink-600" htmlFor="title">
+              タイトル <span className="text-danger">*</span>
+            </label>
+            <Input
+              id="title"
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="例：代表インタビュー 2026年1月"
+              required
             />
           </div>
-        )}
 
-        {/* 本文 */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700" htmlFor="body">
-            {sourceType === 'url' ? '概要・補足（任意）' : '本文'}
-          </label>
-          <textarea
-            id="body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={8}
-            placeholder={sourceType === 'interview' ? 'Q. ○○について教えてください\nA. …' : sourceType === 'doc' ? 'ドキュメントの内容をペーストしてください' : 'ページの概要や補足情報（任意）'}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 resize-y"
-          />
-        </div>
+          {/* URL（url 種別のみ） */}
+          {sourceType === 'url' && (
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-semibold text-ink-600" htmlFor="source-url">URL</label>
+              <Input
+                id="source-url"
+                type="url"
+                value={sourceUrl}
+                onChange={(e) => setSourceUrl(e.target.value)}
+                placeholder="https://example.com/article"
+              />
+            </div>
+          )}
 
-        {/* 送信 */}
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            disabled={submitting || loadingClients}
-            className="inline-flex items-center justify-center gap-2 h-10 px-4 text-[1rem] font-medium bg-primary-500 text-white rounded-lg hover:bg-primary-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                登録中…
-              </>
-            ) : '一次情報を登録'}
-          </button>
-          <Link
-            href="/dashboard/contents"
-            className="inline-flex items-center justify-center h-10 px-4 text-[1rem] font-medium bg-white text-slate-700 border border-slate-200 rounded-lg hover:bg-gray-50 cursor-pointer"
-          >
-            キャンセル
-          </Link>
-        </div>
+          {/* 本文 + AI補助 */}
+          <div className="space-y-2">
+            <label className="text-[13px] font-semibold text-ink-600" htmlFor="body">
+              {sourceType === 'url' ? '概要・補足（任意）' : '本文'}
+            </label>
+            <Textarea
+              id="body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+              placeholder={
+                sourceType === 'interview'
+                  ? 'Q. ○○について教えてください\nA. …'
+                  : sourceType === 'doc'
+                  ? 'ドキュメントの内容をペーストしてください'
+                  : 'ページの概要や補足情報（任意）'
+              }
+            />
+
+            {/* AI補助ボタン（url 以外のみ） */}
+            {sourceType !== 'url' && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  icon="fact_check"
+                  onClick={handleGapCheck}
+                  disabled={checkingGap || structuring || !body.trim()}
+                >
+                  {checkingGap ? 'チェック中…' : '不足をチェック'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  icon="auto_fix_high"
+                  onClick={handleStructure}
+                  disabled={structuring || checkingGap || !body.trim()}
+                >
+                  {structuring ? '整形中…' : '整形する'}
+                </Button>
+              </div>
+            )}
+
+            {/* gap_check 結果 */}
+            {gapResults !== null && (
+              <div className="space-y-1.5">
+                {gapResults.length === 0 ? (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-success-bg border border-success rounded text-[13px] text-success">
+                    <span className="material-symbols-outlined text-[15px] flex-shrink-0">check_circle</span>
+                    GEO5原則を満たしています
+                  </div>
+                ) : (
+                  gapResults.map((item) => (
+                    <div
+                      key={item.geo_key}
+                      className="flex items-start gap-2 px-3 py-2 bg-warning-bg border border-warning rounded text-[13px] text-warning"
+                    >
+                      <span className="material-symbols-outlined text-[15px] mt-0.5 flex-shrink-0">warning</span>
+                      {item.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* structure プレビュー */}
+            {structurePreview !== null && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2 bg-surface-subtle border-b border-border-divider">
+                  <span className="text-[12px] font-semibold text-ink-600">整形プレビュー</span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={() => { setBody(structurePreview); setStructurePreview(null); }}
+                    >
+                      反映
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setStructurePreview(null)}
+                    >
+                      キャンセル
+                    </Button>
+                  </div>
+                </div>
+                <pre className="p-4 text-[12px] text-ink-700 bg-[#FDFBF5] whitespace-pre-wrap font-sans leading-relaxed max-h-56 overflow-y-auto">
+                  {structurePreview}
+                </pre>
+              </div>
+            )}
+          </div>
+
+          {/* 送信ボタン */}
+          <div className="flex items-center gap-3 pt-2">
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={submitting || loadingClients}
+            >
+              {submitting ? '登録中…' : '一次情報を登録'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => router.push('/dashboard/contents')}
+            >
+              キャンセル
+            </Button>
+          </div>
+
+        </Card>
       </form>
     </div>
   );
